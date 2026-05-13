@@ -1,0 +1,33 @@
+{
+  "_comment": "TODO(W5e): Replace with real ECS task definition. Mirror hollis-health-app/server/ops/ecs-task-def.json.",
+  "family": "hollis-workouts-server",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "containerDefinitions": [
+    {
+      "name": "workouts-server",
+      "image": "PLACEHOLDER_ECR_IMAGE_URI",
+      "portMappings": [{ "containerPort": 3002, "protocol": "tcp" }],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "PORT", "value": "3002" },
+        { "name": "AUDIENCE", "value": "hollis-workouts" }
+      ],
+      "secrets": [
+        { "name": "DATABASE_URL", "valueFrom": "PLACEHOLDER_SSM_ARN" },
+        { "name": "IDENTITY_JWT_SECRET", "valueFrom": "PLACEHOLDER_SSM_ARN" },
+        { "name": "IDENTITY_SERVICE_URL", "valueFrom": "PLACEHOLDER_SSM_ARN" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/hollis-workouts-server",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

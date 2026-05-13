@@ -1,0 +1,410 @@
+// ============================================================================
+// Hollis Workouts Server — Prisma Schema
+// ============================================================================
+// 12 SYNCED_COLLECTIONS + CanonicalExercise catalog
+//
+// Design rules:
+//   - Every user-scoped model has userId String indexed (not a FK — Identity
+//     Service owns User; this server is format-agnostic).
+//   - IDs: id String @id — caller-provided (cuid2 or UUID). No @default(cuid()).
+//   - Timestamps: createdAt DateTime + updatedAt DateTime @updatedAt.
+//     No @default(now()) — set explicitly at write time in ISO UTC.
+//   - Deeply nested sub-documents (set arrays, day arrays, interval arrays) are
+//     stored as Json columns validated by the matching Zod schema at read/write.
+//   - CanonicalExercise is NOT user-scoped (global catalog). TODO(W5d): seed.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "./generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// 1. Gym (collection: gyms)
+//    Shape: GymProfile from Workouts models.ts
+//    equipmentItems stored as Json (GymEquipmentItem[]) — nested variant/weight fields
+// ============================================================================
+
+model Gym {
+  id                    String   @id
+  userId                String
+  name                  String
+  /// GymLocation { lat?, lng?, address? }
+  location              Json?
+  /// EquipmentType[] — Postgres text array
+  equipmentTypes        String[]
+  /// Specific equipment catalog IDs (e.g. 'olympic_barbell')
+  equipmentIds          String[]
+  /// GymEquipmentItem[] — full item config including variant, weightStackKg, etc.
+  equipmentItems        Json
+  /// ExerciseSelectionMode enum value
+  exerciseSelectionMode String
+  isActive              Boolean
+  createdAt             DateTime
+  updatedAt             DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, isActive])
+  @@map("gyms")
+}
+
+// ============================================================================
+// 2. Program (collection: programs)
+//    Shape: Program from @hollis/contracts progression/program.ts
+//    schedule (ProgramDay[]) stored as Json — includes exercises[].sets[] deep nesting
+// ============================================================================
+
+model Program {
+  id                String    @id
+  userId            String
+  name              String
+  description       String?
+  /// ProgramType: "linear" | "mesocycle" | "custom"
+  type              String
+  startDate         DateTime
+  endDate           DateTime?
+  durationWeeks     Int
+  isActive          Boolean
+  /// Int[] week numbers that are deload weeks
+  deloadWeekNumbers Int[]
+  deloadPercent     Float
+  /// ProgramDay[] — each day has exercises[].sets[]; stored as Json blob
+  schedule          Json
+  schemaVersion     Int?
+  createdAt         DateTime
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([userId, isActive])
+  @@map("programs")
+}
+
+// ============================================================================
+// 3. Session / TrainingSessionLog (collection: sessions)
+//    Shape: TrainingSessionLog from @hollis/contracts domain/training-session-log.ts
+//    exercises (SessionExercise[]) stored as Json — includes sets[], cardioData, stretchData
+// ============================================================================
+
+model Session {
+  id                 String    @id
+  userId             String
+  programId          String?
+  programDayName     String?
+  gymProfileId       String?
+  startedAt          DateTime
+  completedAt        DateTime?
+  updatedAt          DateTime  @updatedAt
+  isFreestyle        Boolean
+  isSubstitution     Boolean
+  /// "active" | "completed" | "abandoned"
+  status             String
+  /// QuestionnaireResponse — sleep, energy, HRV, etc.
+  questionnaire      Json
+  totalVolumeKg      Float
+  durationMinutes    Float
+  untrackedVolume    Float?
+  /// AIOutlierLabel — broad string label from AI outlier detection
+  aiOutlierLabel     String?
+  schemaVersion      Int?
+  /// ProgramPhase — "hypertrophy" | "strength" | "peaking" | "deload" | "maintenance"
+  programPhase       String?
+  /// String[] of skipped exercise IDs
+  skippedExerciseIds String[]
+  /// SessionExercise[] — includes sets[], cardioData, stretchData; stored as Json
+  exercises          Json
+
+  @@index([userId])
+  @@index([userId, completedAt])
+  @@index([userId, status])
+  @@map("sessions")
+}
+
+// ============================================================================
+// 4. ProgressionBaseline (collection: progressionBaselines)
+//    Shape: ProgressionBaseline from @hollis/contracts progression/baseline.ts
+//    history (BaselineEntry[]) stored as Json
+// ============================================================================
+
+model ProgressionBaseline {
+  id                            String    @id
+  userId                        String
+  /// Canonical exercise ID this baseline tracks
+  exerciseId                    String
+  currentE1RM_Kg                Float
+  topSetWeightKg                Float
+  topSetReps                    Int
+  topSetRIR                     Int
+  lastUpdated                   DateTime
+  /// BaselineEntry[] — history of qualifying sets; stored as Json
+  history                       Json
+  phaseExitE1RM_Kg              Float?
+  phaseExitDate                 Int?
+  /// classMix { s, h, e } — stored as Json
+  classMix                      Json?
+  trendE1RM_Kg                  Float?
+  trendTopSetWeightKg           Float?
+  trendTopSetReps               Int?
+  trendTopSetRIR                Int?
+  missStreak                    Int?
+  /// 0 | 0.05 | 0.1
+  autoDeloadPercent             Float?
+  plateauDeloadUntil            DateTime?
+  plateauDeloadReductionPercent Float?
+  lastPlateauAlertedAt          DateTime?
+  schemaVersion                 Int?
+  createdAt                     DateTime
+  updatedAt                     DateTime  @updatedAt
+
+  @@unique([userId, exerciseId])
+  @@index([userId])
+  @@map("progression_baselines")
+}
+
+// ============================================================================
+// 5. CardioBaseline (collection: cardioBaselines)
+//    Shape: CardioBaseline from @hollis/contracts progression/baseline.ts
+//    history (CardioBaselineEntry[]) stored as Json
+// ============================================================================
+
+model CardioBaseline {
+  id                   String   @id
+  userId               String
+  /// Canonical exercise ID this baseline tracks
+  exerciseId           String
+  bestDurationSeconds  Float
+  bestDistanceKm       Float?
+  bestPaceSecondsPerKm Float?
+  bestMETs             Float?
+  lowestHRAtPace       Int?
+  lastDurationSeconds  Float
+  lastDistanceKm       Float?
+  lastAvgSpeedKmh      Float?
+  lastPaceSecondsPerKm Float?
+  lastIncline          Float?
+  lastResistance       Float?
+  lastAvgHeartRate     Int?
+  lastUpdated          DateTime
+  /// CardioBaselineEntry[] — history entries; stored as Json
+  history              Json
+  createdAt            DateTime
+  updatedAt            DateTime @updatedAt
+
+  @@unique([userId, exerciseId])
+  @@index([userId])
+  @@map("cardio_baselines")
+}
+
+// ============================================================================
+// 6. GymExerciseInstance (collection: gymExerciseInstances)
+//    Shape: GymExerciseInstance from Workouts models.ts
+// ============================================================================
+
+model GymExerciseInstance {
+  id                String   @id
+  userId            String
+  gymId             String
+  exerciseId        String
+  baseWeightKg      Float?
+  /// "lb" | "kg"
+  weightUnit        String
+  /// "total" | "per_side"
+  weightMode        String
+  weightIncrementKg Float?
+  isActive          Boolean
+  notes             String?
+  lastUsedWeightKg  Float?
+  createdAt         DateTime
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, gymId])
+  @@index([userId, exerciseId])
+  @@map("gym_exercise_instances")
+}
+
+// ============================================================================
+// 7. UserExercise (collection: userExercises)
+//    Shape: user-created exercise (Workouts local)
+// ============================================================================
+
+model UserExercise {
+  id            String   @id
+  userId        String
+  name          String
+  /// MuscleGroup[] — Postgres text array
+  muscleGroups  String[]
+  equipmentType String?
+  category      String?
+  /// ExerciseSource — "user" | "ai" | "catalog"
+  source        String
+  createdAt     DateTime
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+  @@map("user_exercises")
+}
+
+// ============================================================================
+// 8. ExerciseAlias (collection: exerciseAliases)
+//    Shape: ExerciseAlias from Workouts models.ts
+// ============================================================================
+
+model ExerciseAlias {
+  id                  String   @id
+  userId              String
+  alias               String
+  normalizedAlias     String
+  canonicalExerciseId String
+  equipmentType       String?
+  gymProfileId        String?
+  /// ExerciseAliasSource — "user" | "ai"
+  source              String
+  createdAt           DateTime
+  updatedAt           DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, canonicalExerciseId])
+  @@map("exercise_aliases")
+}
+
+// ============================================================================
+// 9. Week (collection: weeks)
+//    Shape: WeekDocument from Workouts models.ts
+//    Composite PK: (userId, weekIso) — there is exactly one week doc per user per ISO week.
+//    Sub-documents aiRetrospective, deterministicSnapshot, userAnnotations stored as Json
+//    (they are loosely-typed in WeekDocument as `unknown`).
+//    Conversation sub-sub-collection is NOT stored here (fetched lazily — see syncConfig.ts note).
+// ============================================================================
+
+model Week {
+  userId                   String
+  weekIso                  String
+  /// Frozen deterministic snapshot for the AI retrospective — shape varies by surface; Json
+  deterministicSnapshot    Json?
+  /// AI retrospective deck data — shape varies; Json (not a separate model — avoids over-relationalizing)
+  aiRetrospective          Json?
+  /// User annotations on the week — free-form; Json
+  userAnnotations          Json?
+  conversationUpdatedAt    DateTime?
+  hasConversation          Boolean?
+  lastConversationThreadId String?
+  createdAt                DateTime?
+  updatedAt                DateTime  @updatedAt
+
+  @@id([userId, weekIso])
+  @@index([userId])
+  @@map("weeks")
+}
+
+// ============================================================================
+// 10. AiAuditLogEntry (collection: aiAuditLog)
+//     Shape: AiAuditLogEntry from Workouts models.ts
+//     payload (sourceRef, snapshotInline, aiOutput, diff) stored as Json
+// ============================================================================
+
+model AiAuditLogEntry {
+  id          String   @id
+  userId      String
+  at          DateTime
+  /// SuggestionSource — which AI surface produced this entry
+  surface     String
+  modelTier   String
+  snapshotRef String?
+  /// "auto_applied" | "user_applied" | "user_dismissed" | "user_overrode"
+  action      String
+  persisted   Boolean
+  /// Full payload: sourceRef, snapshotInline, aiOutput, diff — stored as Json
+  payload     Json
+
+  @@index([userId])
+  @@index([userId, at])
+  @@index([userId, surface])
+  @@map("ai_audit_log")
+}
+
+// ============================================================================
+// 11. InjuryRecord (collection: injuries)
+//     Shape: InjuryRecord from Workouts models.ts
+// ============================================================================
+
+model InjuryRecord {
+  id          String   @id
+  userId      String
+  muscleGroup String
+  description String
+  isActive    Boolean
+  createdAt   DateTime
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, isActive])
+  @@map("injury_records")
+}
+
+// ============================================================================
+// 12. ConversationRollingSummary (singleton per user — NOT a collection)
+//     Shape: ConversationRollingSummaryDoc from Workouts models.ts
+//     userId IS the PK (one row per user).
+//     entries (ConversationRollingSummaryEntry[]) stored as Json.
+// ============================================================================
+
+model ConversationRollingSummary {
+  /// userId is the PK — one summary document per user
+  userId    String   @id
+  /// ConversationRollingSummaryEntry[] — stored as Json
+  entries   Json
+  updatedAt DateTime @updatedAt
+
+  @@map("conversation_rolling_summaries")
+}
+
+// ============================================================================
+// 13. CanonicalExercise — global catalog (NOT user-scoped)
+//     Shape: CanonicalExercise from Workouts models.ts
+//     NOT in SYNCED_COLLECTIONS — read-only reference data.
+//     TODO(W5d): Seed from Firestore exercises export.
+//     TODO(W5f): Add admin write endpoint if catalog needs server-side updates.
+// ============================================================================
+
+model CanonicalExercise {
+  /// Exercise slug ID (e.g. "cable_bicep_curl")
+  id                    String   @id
+  name                  String
+  description           String
+  /// TrackingMode — "weight_reps" | "timed" | "cardio" | "stretch"
+  category              String
+  /// ExerciseSubcategory
+  subcategory           String?
+  /// MuscleGroup[] — Postgres text array
+  primaryMuscleGroups   String[]
+  /// MuscleGroup[] — Postgres text array
+  secondaryMuscleGroups String[]
+  /// EquipmentType
+  equipmentType         String
+  /// String[] — specific equipment IDs required
+  requiredEquipment     String[]
+  isBodyweight          Boolean
+  isUnilateral          Boolean
+  defaultRestTimerSec   Int
+  /// WeightMode — "total" | "per_side"
+  defaultWeightMode     String
+  illustrationUrl       String
+  /// Record<string, unknown> — arbitrary catalog metadata; stored as Json
+  metadata              Json
+  minimumIncrementKg    Float
+  /// ExerciseSource — "catalog" | "user" | "ai"
+  source                String
+  isActive              Boolean
+  /// ExerciseTrackingMode — "reps" | "timed" | "cardio" | "stretch"
+  trackingMode          String?
+  createdAt             DateTime
+
+  @@index([equipmentType])
+  @@index([category])
+  @@index([isActive])
+  @@map("canonical_exercises")
+}
