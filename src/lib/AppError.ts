@@ -4,7 +4,7 @@
  * deps: @hollis/contracts (sanitizeErrorMessage) | consumers: middleware/errorHandler.ts, route handlers
  */
 
-import { sanitizeErrorMessage, sanitizeErrorObject } from "@hollis/contracts";
+import { sanitizeErrorMessage, sanitizeErrorObject } from "@hollis-studio/contracts";
 
 export const ERROR_CODES = {
   VALIDATION_ERROR: "VALIDATION_ERROR",
@@ -13,6 +13,8 @@ export const ERROR_CODES = {
   NOT_FOUND: "NOT_FOUND",
   CONFLICT: "CONFLICT",
   RATE_LIMITED: "RATE_LIMITED",
+  PAYLOAD_TOO_LARGE: "PAYLOAD_TOO_LARGE",
+  INVALID_JSON: "INVALID_JSON",
   INTERNAL_ERROR: "INTERNAL_ERROR",
 } as const;
 

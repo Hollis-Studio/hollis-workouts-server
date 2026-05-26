@@ -4,7 +4,7 @@
  * Attaches userId and tokenClaims to Request after requireAuth middleware runs.
  */
 
-import type { AccessTokenClaims } from "@hollis/auth-client";
+import type { AccessTokenClaims } from "@hollis-studio/auth-client";
 
 declare module "express-serve-static-core" {
   interface Request {

@@ -10,14 +10,16 @@
  * deps: @hollis/auth-client, lib/env, lib/logger | consumers: routes/*
  */
 
-import { createAuthClient } from "@hollis/auth-client";
+import { createAuthClient } from "@hollis-studio/auth-client";
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { sendUnauthorized } from "../utils/response.js";
 
-// Import the type augmentation
-import "../types/express.js";
+// req.userId / req.tokenClaims types come from the ambient augmentation in
+// src/types/express.d.ts (applied via tsconfig include). Do NOT add a runtime
+// `import "../types/express.js"` — that path emits no JS and crashes at runtime
+// (the .d.ts produces no dist output).
 
 // Lazily-initialized auth client (env not yet validated at module load)
 let _authClient: ReturnType<typeof createAuthClient> | null = null;
@@ -47,12 +49,30 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction): vo
     if (err) {
       const appErr = err as { code?: string; message?: string };
       logger.warn(
-        { code: appErr.code, path: req.path, component: "auth" },
+        { code: appErr.code, message: appErr.message, path: req.path, component: "auth" },
         "[AUTH] Token verification failed",
       );
-      sendUnauthorized(res, appErr.message ?? "Invalid or expired token");
+      // Generic client message — do NOT echo the underlying reason ("jwt
+      // expired" / "invalid signature" / "invalid audience" / "Identity Service
+      // unreachable: <net error>"). The specifics are logged above; leaking them
+      // to the caller aids token-forgery probing and can disclose internal
+      // network topology. Clients should refresh-then-retry on any 401.
+      sendUnauthorized(res, "Invalid or expired token");
       return;
     }
+
+    // Security: reject refresh / mfa_pending tokens — only access tokens are
+    // valid for API calls. The auth-client populates req.tokenClaims after
+    // successful verification.
+    if (req.tokenClaims?.type !== "access") {
+      logger.warn(
+        { tokenType: req.tokenClaims?.type, path: req.path, component: "auth" },
+        "[AUTH] Non-access token rejected",
+      );
+      sendUnauthorized(res, "Access token required");
+      return;
+    }
+
     next();
   });
 };

@@ -67,7 +67,7 @@ See `.env.example` for a copy-paste template. `DATABASE_URL` and `IDENTITY_JWT_S
 ### Resource routes (`/v1/*`, require JWT)
 
 All routes below require a valid Identity Service JWT (`Authorization: Bearer <token>`).
-CRUD handlers are stubbed — implementation deferred to W5c.
+All CRUD handlers are fully implemented (user-scoped, IDOR-safe, cursor-paginated).
 
 | Prefix | Resource |
 |--------|----------|
@@ -103,7 +103,9 @@ CRUD handlers are stubbed — implementation deferred to W5c.
 | `npm run start` | Start compiled production server |
 | `npm run typecheck` | Type-check without emitting |
 | `npm run prisma:generate` | Regenerate Prisma client |
-| `npm run prisma:migrate` | Run pending migrations (dev) |
+| `npm run prisma:migrate` | Create + apply a migration (dev only) |
+| `npm run prisma:migrate:deploy` | Apply existing migrations (production-safe) |
+| `npm run prisma:seed` | Seed the canonical exercise catalog (needs the sibling `hollis-workouts` repo present) |
 
 ## Deployment
 
@@ -114,6 +116,7 @@ Deployed on AWS ECS Fargate. The task definition template is at `ops/ecs-task-de
 | Milestone | Status |
 |-----------|--------|
 | W5a/W5b: Bootstrap (Express, Prisma, auth, health checks, middleware) | Complete |
-| W5c: CRUD route handlers for all 12 resource routers | TODO |
-| W5d: Canonical exercise catalog seeding | TODO |
-| W5e: Production ECS task definition | TODO |
+| W5c: CRUD route handlers for all 13 resources + read-only catalog | Complete |
+| W5d: Canonical exercise catalog seeding | Seed script ready (`prisma:seed`); not yet run against a DB |
+| W5e: Production ECS task definition | Placeholder — see `ops/ecs-task-def.json` |
+| Initial Prisma migration (no `prisma/migrations/` yet) | TODO — generate against a real DB before deploy |

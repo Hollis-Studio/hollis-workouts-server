@@ -45,7 +45,8 @@ export function sendNotFound(res: Response, resource: string): void {
 }
 
 export function sendBadRequest(res: Response, message: string): void {
-  sendError(res, message, 400, "BAD_REQUEST");
+  // Aligned to VALIDATION_ERROR so the code matches AppError.badRequest() and the ERROR_CODES enum.
+  sendError(res, message, 400, "VALIDATION_ERROR");
 }
 
 export function sendUnauthorized(res: Response, message = "Unauthorized"): void {

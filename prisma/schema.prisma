@@ -1,7 +1,7 @@
 // ============================================================================
 // Hollis Workouts Server — Prisma Schema
 // ============================================================================
-// 12 SYNCED_COLLECTIONS + CanonicalExercise catalog
+// 13 SYNCED_COLLECTIONS + CanonicalExercise catalog
 //
 // Design rules:
 //   - Every user-scoped model has userId String indexed (not a FK — Identity
@@ -120,20 +120,25 @@ model Session {
   @@index([userId])
   @@index([userId, completedAt])
   @@index([userId, status])
+  @@index([userId, startedAt])
+  // Supports the ?since incremental-sync filter (where updatedAt >= …).
+  @@index([userId, updatedAt])
   @@map("sessions")
 }
 
 // ============================================================================
 // 4. ProgressionBaseline (collection: progressionBaselines)
-//    Shape: ProgressionBaseline from @hollis/contracts progression/baseline.ts
+//    Shape: ProgressionBaseline from @hollis-studio/contracts/progression/baseline
+//    Field names match ProgressionBaselineSchema (canonicalExerciseId, not exerciseId).
 //    history (BaselineEntry[]) stored as Json
 // ============================================================================
 
 model ProgressionBaseline {
-  id                            String    @id
   userId                        String
-  /// Canonical exercise ID this baseline tracks
-  exerciseId                    String
+  /// Canonical exercise ID this baseline tracks.
+  /// Primary key is composite (userId, canonicalExerciseId) — mirrors Firestore
+  /// where the doc id WAS the canonicalExerciseId. No surrogate id column.
+  canonicalExerciseId           String
   currentE1RM_Kg                Float
   topSetWeightKg                Float
   topSetReps                    Int
@@ -159,25 +164,31 @@ model ProgressionBaseline {
   createdAt                     DateTime
   updatedAt                     DateTime  @updatedAt
 
-  @@unique([userId, exerciseId])
+  @@id([userId, canonicalExerciseId])
   @@index([userId])
+  // Supports the list orderBy [{ lastUpdated desc }, { canonicalExerciseId desc }].
+  @@index([userId, lastUpdated])
   @@map("progression_baselines")
 }
 
 // ============================================================================
 // 5. CardioBaseline (collection: cardioBaselines)
-//    Shape: CardioBaseline from @hollis/contracts progression/baseline.ts
+//    Shape: CardioBaseline from @hollis-studio/contracts/progression/baseline
+//    Field names match CardioBaselineSchema (canonicalExerciseId, not exerciseId).
 //    history (CardioBaselineEntry[]) stored as Json
 // ============================================================================
 
 model CardioBaseline {
-  id                   String   @id
   userId               String
-  /// Canonical exercise ID this baseline tracks
-  exerciseId           String
+  /// Canonical exercise ID this baseline tracks.
+  /// Primary key is composite (userId, canonicalExerciseId) — mirrors Firestore
+  /// where the doc id WAS the canonicalExerciseId. No surrogate id column.
+  canonicalExerciseId  String
   bestDurationSeconds  Float
   bestDistanceKm       Float?
   bestPaceSecondsPerKm Float?
+  /// bestMETs must be written explicitly as null when absent, never omitted —
+  /// the app's CardioBaselineSchema requires the key present (z.number().nullable()).
   bestMETs             Float?
   lowestHRAtPace       Int?
   lastDurationSeconds  Float
@@ -193,58 +204,96 @@ model CardioBaseline {
   createdAt            DateTime
   updatedAt            DateTime @updatedAt
 
-  @@unique([userId, exerciseId])
+  @@id([userId, canonicalExerciseId])
   @@index([userId])
+  // Supports the list orderBy [{ lastUpdated desc }, { canonicalExerciseId desc }].
+  @@index([userId, lastUpdated])
   @@map("cardio_baselines")
 }
 
 // ============================================================================
 // 6. GymExerciseInstance (collection: gymExerciseInstances)
 //    Shape: GymExerciseInstance from Workouts models.ts
+//    Field names match GymExerciseInstanceSchema (gymProfileId, canonicalExerciseId).
 // ============================================================================
 
 model GymExerciseInstance {
-  id                String   @id
-  userId            String
-  gymId             String
-  exerciseId        String
-  baseWeightKg      Float?
-  /// "lb" | "kg"
-  weightUnit        String
-  /// "total" | "per_side"
-  weightMode        String
-  weightIncrementKg Float?
-  isActive          Boolean
-  notes             String?
-  lastUsedWeightKg  Float?
-  createdAt         DateTime
-  updatedAt         DateTime @updatedAt
+  id                  String   @id
+  userId              String
+  gymProfileId        String
+  canonicalExerciseId String
+  baseWeightKg        Float?
+  /// WeightUnit — "kg" | "lbs"
+  weightUnit          String
+  /// WeightMode — "absolute" | "relative"
+  weightMode          String
+  weightIncrementKg   Float?
+  isActive            Boolean
+  notes               String?
+  lastUsedWeightKg    Float?
+  createdAt           DateTime
+  updatedAt           DateTime @updatedAt
 
   @@index([userId])
-  @@index([userId, gymId])
-  @@index([userId, exerciseId])
+  @@index([userId, gymProfileId])
+  @@index([userId, canonicalExerciseId])
+  // Supports the CRUD factory's default list orderBy [{ createdAt desc }, { id desc }].
+  @@index([userId, createdAt])
   @@map("gym_exercise_instances")
 }
 
 // ============================================================================
 // 7. UserExercise (collection: userExercises)
-//    Shape: user-created exercise (Workouts local)
+//    Shape: full CanonicalExercise written by the app into userExercises.
+//    The app writes the complete CanonicalExercise payload (including all
+//    muscle-group, equipment, and tracking fields) when users create exercises.
 // ============================================================================
 
 model UserExercise {
-  id            String   @id
-  userId        String
-  name          String
-  /// MuscleGroup[] — Postgres text array
-  muscleGroups  String[]
-  equipmentType String?
-  category      String?
-  /// ExerciseSource — "user" | "ai" | "catalog"
-  source        String
-  createdAt     DateTime
-  updatedAt     DateTime @updatedAt
+  id                    String   @id
+  userId                String
+  name                  String
+  description           String
+  /// TrackingMode — "weightlifting" | "cardio" | "stretching"
+  category              String
+  /// ExerciseSubcategory — "compound" | "isolation" | "machine" | "freeweight" |
+  ///   "bodyweight" | "cable" | "treadmill" | "bike" | "rowing" | "elliptical" |
+  ///   "stairmaster" | "outdoor_running" | "outdoor_walking" | "outdoor_cycling" |
+  ///   "jump_rope" | "isometric" | "flexibility"
+  /// When the stored value is null, the server must infer subcategory before
+  /// responding using inferExerciseSubcategory(category, equipmentType).
+  subcategory           String?
+  /// MuscleGroup[] — primary muscle groups; Postgres text array
+  primaryMuscleGroups   String[]
+  /// MuscleGroup[] — secondary muscle groups; Postgres text array
+  secondaryMuscleGroups String[]
+  /// EquipmentType — "barbell" | "dumbbell" | "kettlebell" | "cable" | "machine" |
+  ///   "bodyweight" | "resistance_band" | "squat_rack" | "bench" | "pull_up_bar" |
+  ///   "plate_loaded_machine" | "smith_machine" | "treadmill" | "stationary_bike" |
+  ///   "rowing_machine" | "elliptical" | "stairmaster" | "jump_rope" | "none" | "other"
+  equipmentType         String
+  /// String[] — specific equipment IDs required (e.g. "olympic_barbell")
+  requiredEquipment     String[]
+  isBodyweight          Boolean
+  isUnilateral          Boolean
+  defaultRestTimerSec   Int
+  /// WeightMode — "absolute" | "relative"
+  defaultWeightMode     String
+  illustrationUrl       String
+  /// Record<string, unknown> — arbitrary metadata; stored as Json
+  metadata              Json
+  minimumIncrementKg    Float
+  /// ExerciseSource — "library" | "user_created" | "ai_generated_freestyle"
+  source                String
+  /// ExerciseTrackingMode — "reps" | "timed" | "cardio" | "stretch"
+  trackingMode          String?
+  isActive              Boolean
+  createdAt             DateTime
+  updatedAt             DateTime @updatedAt
 
   @@index([userId])
+  // Supports the CRUD factory's default list orderBy [{ createdAt desc }, { id desc }].
+  @@index([userId, createdAt])
   @@map("user_exercises")
 }
 
@@ -261,13 +310,16 @@ model ExerciseAlias {
   canonicalExerciseId String
   equipmentType       String?
   gymProfileId        String?
-  /// ExerciseAliasSource — "user" | "ai"
+  /// ExerciseAliasSource — "scan" | "manual" | "ai_match"
   source              String
   createdAt           DateTime
   updatedAt           DateTime @updatedAt
 
   @@index([userId])
   @@index([userId, canonicalExerciseId])
+  @@index([userId, normalizedAlias])
+  // Supports the CRUD factory's default list orderBy [{ createdAt desc }, { id desc }].
+  @@index([userId, createdAt])
   @@map("exercise_aliases")
 }
 
@@ -280,6 +332,10 @@ model ExerciseAlias {
 //    Conversation sub-sub-collection is NOT stored here (fetched lazily — see syncConfig.ts note).
 // ============================================================================
 
+// REST responses must synthesize id = weekIso when returning Week documents —
+// the app's WeekDocument interface requires an `id` field equal to weekIso.
+// There is intentionally no `id` column in this table; the composite PK is
+// (userId, weekIso).
 model Week {
   userId                   String
   weekIso                  String
@@ -289,8 +345,11 @@ model Week {
   aiRetrospective          Json?
   /// User annotations on the week — free-form; Json
   userAnnotations          Json?
+  /// forward-spec — not yet written by any app path
   conversationUpdatedAt    DateTime?
+  /// forward-spec — not yet written by any app path
   hasConversation          Boolean?
+  /// forward-spec — not yet written by any app path
   lastConversationThreadId String?
   createdAt                DateTime?
   updatedAt                DateTime  @updatedAt
@@ -303,13 +362,16 @@ model Week {
 // ============================================================================
 // 10. AiAuditLogEntry (collection: aiAuditLog)
 //     Shape: AiAuditLogEntry from Workouts models.ts
-//     payload (sourceRef, snapshotInline, aiOutput, diff) stored as Json
+//     The app stores sourceRef, snapshotInline, aiOutput, diff as top-level
+//     document fields; they are flattened into four columns here (not collapsed
+//     into a single payload Json blob).
+//     'timestamp' matches the app field name (was 'at' — renamed for parity).
 // ============================================================================
 
 model AiAuditLogEntry {
   id          String   @id
   userId      String
-  at          DateTime
+  timestamp   DateTime
   /// SuggestionSource — which AI surface produced this entry
   surface     String
   modelTier   String
@@ -317,11 +379,17 @@ model AiAuditLogEntry {
   /// "auto_applied" | "user_applied" | "user_dismissed" | "user_overrode"
   action      String
   persisted   Boolean
-  /// Full payload: sourceRef, snapshotInline, aiOutput, diff — stored as Json
-  payload     Json
+  /// AiSuggestionSourceRef — describes the input context that triggered the AI call
+  sourceRef       Json
+  /// Full deterministic snapshot captured at suggestion time (may be large); null if not captured
+  snapshotInline  Json?
+  /// Raw AI model output (suggestions, reasoning, metadata)
+  aiOutput        Json
+  /// Delta between previous state and applied suggestion; null if not applied
+  diff            Json?
 
   @@index([userId])
-  @@index([userId, at])
+  @@index([userId, timestamp])
   @@index([userId, surface])
   @@map("ai_audit_log")
 }
@@ -338,6 +406,8 @@ model InjuryRecord {
   description String
   isActive    Boolean
   createdAt   DateTime
+  /// SERVER-MANAGED — not sent by the client; stripped by the app's Zod on read.
+  /// Kept intentionally for sync ordering and audit purposes.
   updatedAt   DateTime @updatedAt
 
   @@index([userId])
@@ -363,8 +433,55 @@ model ConversationRollingSummary {
 }
 
 // ============================================================================
-// 13. CanonicalExercise — global catalog (NOT user-scoped)
-//     Shape: CanonicalExercise from Workouts models.ts
+// 13. MetricBasketSnapshotRecord (collection: metricBasketSnapshots)
+//     Shape: MetricBasketSnapshotRecord from @hollis-studio/contracts/progression/metrics
+//     Firestore path: users/{uid}/metricBasketSnapshots
+//
+//     Record fields (scalars, queryable):
+//       id            — caller-provided composite key:
+//                       "{exerciseId}__{captureKind}__{sourceSessionId|timestamp}"
+//       exerciseId    — the canonical exercise this snapshot covers
+//       capturedAt    — when the basket was computed (queryable; app filters by date)
+//       captureKind   — "manual" | "pre_session" | "post_session"
+//       sourceSessionId — the session that triggered capture (optional)
+//
+//     snapshot column:
+//       Stored as Json (MetricBasketSnapshot shape):
+//         { exerciseId, capturedAt?, e1rmGated?, bestQualifyingSet?,
+//           relativeStrengthScore?, repRangePivot? }
+//       The nested e1rmGated/BQS/RSS/pivot fields are deeply nested objects
+//       with no stable query patterns — Json is appropriate here.
+// ============================================================================
+
+model MetricBasketSnapshotRecord {
+  id              String   @id
+  userId          String
+  /// The canonical exercise this snapshot covers
+  exerciseId      String
+  capturedAt      DateTime
+  /// MetricBasketSnapshotCaptureKind — "manual" | "pre_session" | "post_session"
+  captureKind     String
+  /// Session that triggered capture (null for manual/history snapshots)
+  sourceSessionId String?
+  /// MetricBasketSnapshot payload — deeply nested; stored as Json
+  snapshot        Json
+  /// SERVER-MANAGED — not sent by the client; stripped by the app's Zod on read.
+  /// Kept intentionally for sync ordering and audit purposes.
+  createdAt       DateTime
+
+  @@index([userId])
+  @@index([userId, exerciseId])
+  @@index([userId, sourceSessionId])
+  // Supports the ?since filter (where capturedAt >= …).
+  @@index([userId, capturedAt])
+  // Supports the CRUD factory's default list orderBy [{ createdAt desc }, { id desc }].
+  @@index([userId, createdAt])
+  @@map("metric_basket_snapshots")
+}
+
+// ============================================================================
+// 14. CanonicalExercise — global catalog (NOT user-scoped)
+//     Shape: CanonicalExercise from Workouts models.ts + CanonicalExerciseSchema
 //     NOT in SYNCED_COLLECTIONS — read-only reference data.
 //     TODO(W5d): Seed from Firestore exercises export.
 //     TODO(W5f): Add admin write endpoint if catalog needs server-side updates.
@@ -375,28 +492,36 @@ model CanonicalExercise {
   id                    String   @id
   name                  String
   description           String
-  /// TrackingMode — "weight_reps" | "timed" | "cardio" | "stretch"
+  /// TrackingMode — "weightlifting" | "cardio" | "stretching"
   category              String
-  /// ExerciseSubcategory
+  /// ExerciseSubcategory — "compound" | "isolation" | "machine" | "freeweight" |
+  ///   "bodyweight" | "cable" | "treadmill" | "bike" | "rowing" | "elliptical" |
+  ///   "stairmaster" | "outdoor_running" | "outdoor_walking" | "outdoor_cycling" |
+  ///   "jump_rope" | "isometric" | "flexibility"
+  /// When the stored value is null, the server must infer subcategory before
+  /// responding using inferExerciseSubcategory(category, equipmentType).
   subcategory           String?
   /// MuscleGroup[] — Postgres text array
   primaryMuscleGroups   String[]
   /// MuscleGroup[] — Postgres text array
   secondaryMuscleGroups String[]
-  /// EquipmentType
+  /// EquipmentType — "barbell" | "dumbbell" | "kettlebell" | "cable" | "machine" |
+  ///   "bodyweight" | "resistance_band" | "squat_rack" | "bench" | "pull_up_bar" |
+  ///   "plate_loaded_machine" | "smith_machine" | "treadmill" | "stationary_bike" |
+  ///   "rowing_machine" | "elliptical" | "stairmaster" | "jump_rope" | "none" | "other"
   equipmentType         String
   /// String[] — specific equipment IDs required
   requiredEquipment     String[]
   isBodyweight          Boolean
   isUnilateral          Boolean
   defaultRestTimerSec   Int
-  /// WeightMode — "total" | "per_side"
+  /// WeightMode — "absolute" | "relative"
   defaultWeightMode     String
   illustrationUrl       String
   /// Record<string, unknown> — arbitrary catalog metadata; stored as Json
   metadata              Json
   minimumIncrementKg    Float
-  /// ExerciseSource — "catalog" | "user" | "ai"
+  /// ExerciseSource — "library" | "user_created" | "ai_generated_freestyle"
   source                String
   isActive              Boolean
   /// ExerciseTrackingMode — "reps" | "timed" | "cardio" | "stretch"

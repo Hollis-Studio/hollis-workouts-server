@@ -9,6 +9,7 @@
 
 import type { NextFunction, Request, Response } from "express";
 import { AppError } from "../lib/AppError.js";
+import { Prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
 import { sendError } from "../utils/response.js";
 
@@ -43,6 +44,30 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
       );
     }
     res.status(err.statusCode).json(err.toJSON());
+    return;
+  }
+
+  // Known Prisma errors — map to meaningful status codes. The offline-first
+  // sync path hits these under normal conditions (retries, stale cursors).
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    // P2002: unique-constraint violation — e.g. two concurrent PUTs with the
+    // same client-generated id both pass the existence pre-check and race to
+    // create. Idempotent intent → surface as 409, not a 500.
+    if (err.code === "P2002") {
+      logger.warn({ code: err.code, path: req.path, requestId: req.requestId }, "Prisma unique-constraint conflict");
+      res.status(409).json({ ok: false, err: { code: "CONFLICT", message: "Resource already exists" } });
+      return;
+    }
+    // P2025: record not found — e.g. a stale pagination cursor, or a row
+    // deleted between an ownership check and the write. → 404, not a 500.
+    if (err.code === "P2025") {
+      logger.warn({ code: err.code, path: req.path, requestId: req.requestId }, "Prisma record-not-found / stale cursor");
+      res.status(404).json({ ok: false, err: { code: "NOT_FOUND", message: "Resource not found or cursor is stale" } });
+      return;
+    }
+    // Other known Prisma errors: log the code server-side, generic 500 to client.
+    logger.error({ code: err.code, requestId: req.requestId, path: req.path }, "Prisma known request error");
+    sendError(res, "An unexpected error occurred", 500, "INTERNAL_ERROR");
     return;
   }
 

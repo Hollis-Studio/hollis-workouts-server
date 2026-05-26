@@ -1,55 +1,52 @@
 /**
  * @ai-context Router barrel for Workouts Server resource routes.
  *
- * All 12 SYNCED_COLLECTIONS are stubbed here — CRUD wiring deferred to W5c.
- * Each sub-router is mounted at its collection path under /v1.
+ * Each resource lives in its own file under src/routes/.  This file imports and
+ * mounts them.  requireAuth is applied once here on apiRouter — all sub-routers
+ * inherit it.
  *
- * TODO(W5c): Implement CRUD handlers for all 12 resource routers below.
+ * Resources wired here (14 total):
+ *   Standard factory routers (GET / GET :id / PUT :id / DELETE or PATCH :id):
+ *     gyms                       soft-delete   src/routes/gyms.ts
+ *     programs                   hard-delete   src/routes/programs.ts
+ *     sessions                   hard-delete   src/routes/sessions.ts
+ *     gym-exercise-instances     hard-delete   src/routes/gymExerciseInstances.ts
+ *     user-exercises             soft-delete   src/routes/userExercises.ts
+ *     exercise-aliases           hard-delete   src/routes/exerciseAliases.ts
+ *     injuries                   soft-delete   src/routes/injuries.ts
+ *     metric-basket-snapshots    hard-delete   src/routes/metricBasketSnapshots.ts   ← 13th resource
+ *
+ *   Custom routers (special-cased, do NOT use the factory directly):
+ *     progression-baselines  src/routes/progressionBaselines.ts  (composite key upsert)
+ *     cardio-baselines       src/routes/cardioBaselines.ts        (composite key upsert)
+ *     weeks                  src/routes/weeks.ts                  (composite PK, no delete)
+ *     ai-audit-log           src/routes/aiAuditLog.ts             (immutable, POST-only write)
+ *     conversation-rolling-summary  src/routes/conversationRollingSummary.ts (singleton)
+ *     exercises              src/routes/exercises.ts              (read-only catalog)
+ *
+ * deps: express, middleware/auth, routes/*
+ * consumers: src/index.ts (mounted at /v1)
  */
 
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth.js";
 
-// ── Per-resource routers (stubs) ──────────────────────────────────────────────
+// ── Per-resource routers ───────────────────────────────────────────────────────
 
-const gymsRouter = Router();
-// TODO(W5c): GET /v1/gyms, POST /v1/gyms, GET /v1/gyms/:id, PUT /v1/gyms/:id, DELETE /v1/gyms/:id
-
-const programsRouter = Router();
-// TODO(W5c): CRUD for /v1/programs
-
-const sessionsRouter = Router();
-// TODO(W5c): CRUD for /v1/sessions
-
-const progressionBaselinesRouter = Router();
-// TODO(W5c): CRUD for /v1/progression-baselines
-
-const cardioBaselinesRouter = Router();
-// TODO(W5c): CRUD for /v1/cardio-baselines
-
-const gymExerciseInstancesRouter = Router();
-// TODO(W5c): CRUD for /v1/gym-exercise-instances
-
-const userExercisesRouter = Router();
-// TODO(W5c): CRUD for /v1/user-exercises
-
-const exerciseAliasesRouter = Router();
-// TODO(W5c): CRUD for /v1/exercise-aliases
-
-const weeksRouter = Router();
-// TODO(W5c): CRUD for /v1/weeks
-
-const aiAuditLogRouter = Router();
-// TODO(W5c): CRUD for /v1/ai-audit-log
-
-const injuriesRouter = Router();
-// TODO(W5c): CRUD for /v1/injuries
-
-const conversationRollingSummaryRouter = Router();
-// TODO(W5c): GET/PUT for /v1/conversation-rolling-summary (singleton per user)
-
-const exercisesRouter = Router();
-// TODO(W5d): Seed canonical exercises catalog; GET /v1/exercises, GET /v1/exercises/:id (read-only)
+import { gymsRouter } from "./gyms.js";
+import { programsRouter } from "./programs.js";
+import { sessionsRouter } from "./sessions.js";
+import { progressionBaselinesRouter } from "./progressionBaselines.js";
+import { cardioBaselinesRouter } from "./cardioBaselines.js";
+import { gymExerciseInstancesRouter } from "./gymExerciseInstances.js";
+import { userExercisesRouter } from "./userExercises.js";
+import { exerciseAliasesRouter } from "./exerciseAliases.js";
+import { weeksRouter } from "./weeks.js";
+import { aiAuditLogRouter } from "./aiAuditLog.js";
+import { injuriesRouter } from "./injuries.js";
+import { conversationRollingSummaryRouter } from "./conversationRollingSummary.js";
+import { exercisesRouter } from "./exercises.js";
+import { metricBasketSnapshotsRouter } from "./metricBasketSnapshots.js";
 
 // ── Root router ────────────────────────────────────────────────────────────────
 
@@ -71,3 +68,4 @@ apiRouter.use("/ai-audit-log", aiAuditLogRouter);
 apiRouter.use("/injuries", injuriesRouter);
 apiRouter.use("/conversation-rolling-summary", conversationRollingSummaryRouter);
 apiRouter.use("/exercises", exercisesRouter);
+apiRouter.use("/metric-basket-snapshots", metricBasketSnapshotsRouter);

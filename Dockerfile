@@ -1,59 +1,67 @@
+# syntax=docker/dockerfile:1.7
 # ============================================================
-# Hollis Workouts Server — Multi-stage Docker build
-# Stage 0: hollis-shared — clone + build the sibling shared monorepo
-# Stage 1: deps          — install production dependencies
-# Stage 2: build         — compile TypeScript
-# Stage 3: runner        — lean production image
+# Hollis Workouts Server — production Dockerfile
+# Stage 1: builder — install deps, generate Prisma client, compile TS
+# Stage 2: runner  — lean non-root runtime image
 #
-# Shared deps (@hollis/contracts, @hollis/auth-client) use file:
-# refs against ../hollis-shared. See:
-# https://github.com/idlandes04/hollis-shared/blob/main/docs/2026-05-13-shared-deps-distribution.md
+# Shared deps (@hollis-studio/contracts, @hollis-studio/auth-client) are
+# installed from GitHub Packages, NOT cloned. `npm ci` therefore needs an
+# .npmrc carrying the registry mapping + token. The committed ./.npmrc is NOT
+# copied (it references ${NODE_AUTH_TOKEN}, which is unset in the build sandbox
+# and 401s). Instead, mount it as a BuildKit secret that carries scope+token:
+#
+#   docker build \
+#     --secret id=npmrc,src=$HOME/.config/hollis/npmrc-with-token \
+#     -t hollis-workouts-server .
+#
+# (TODO(deploy): SHA-pin the node:20-alpine base via Renovate/Dependabot.)
 # ============================================================
 
-# ---- Stage 0: hollis-shared ----
-FROM node:20-alpine AS hollis-shared
-RUN apk add --no-cache git
-WORKDIR /workspace
-ARG HOLLIS_SHARED_REF=main
-RUN git clone --depth 1 --branch ${HOLLIS_SHARED_REF} \
-      https://github.com/idlandes04/hollis-shared.git hollis-shared
-WORKDIR /workspace/hollis-shared
-RUN npm ci && npm run build
+# ---- Stage 1: builder ----
+FROM node:20-alpine AS builder
+WORKDIR /app
 
-# ---- Stage 1: deps ----
-FROM node:20-alpine AS deps
-WORKDIR /workspace/workouts-server
-# Place hollis-shared at the sibling path file:../hollis-shared refs expect
-COPY --from=hollis-shared /workspace/hollis-shared /workspace/hollis-shared
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+# Prisma's query engine needs openssl on alpine.
+RUN apk add --no-cache openssl
 
-# ---- Stage 2: build ----
-FROM node:20-alpine AS build
-WORKDIR /workspace/workouts-server
-COPY --from=hollis-shared /workspace/hollis-shared /workspace/hollis-shared
-COPY package.json package-lock.json* ./
-RUN npm ci
-COPY tsconfig.json ./
-COPY src/ ./src/
+COPY package.json package-lock.json ./
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc npm ci
+
+# Generate the Prisma client (dummy URL satisfies generation; not used to connect).
 COPY prisma/ ./prisma/
 COPY prisma.config.ts ./
-RUN npm run prisma:generate
+RUN DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy npm run prisma:generate
+
+# Compile TypeScript.
+COPY tsconfig.json ./
+COPY src/ ./src/
 RUN npm run build
 
-# ---- Stage 3: runner ----
-FROM node:20-alpine AS runner
-WORKDIR /workspace/workouts-server
-ENV NODE_ENV=production
+# Drop dev dependencies for a smaller runtime node_modules (keeps prisma/generated).
+RUN npm prune --omit=dev
 
-# Ship hollis-shared on disk; node_modules contains file: symlinks
-# that resolve to /workspace/hollis-shared/packages/* at runtime
-COPY --from=hollis-shared /workspace/hollis-shared /workspace/hollis-shared
-COPY --from=deps /workspace/workouts-server/node_modules ./node_modules
-COPY --from=build /workspace/workouts-server/dist ./dist
-COPY --from=build /workspace/workouts-server/prisma ./prisma
-COPY package.json ./
+# ---- Stage 2: runner ----
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=3002
+
+RUN apk add --no-cache openssl && \
+    addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 --ingroup nodejs workouts
+
+# Built artifacts + pruned deps + generated Prisma client.
+COPY --from=builder --chown=workouts:nodejs /app/dist ./dist
+COPY --from=builder --chown=workouts:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=workouts:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=workouts:nodejs /app/package.json ./package.json
+
+USER workouts
 
 EXPOSE 3002
+
+# Liveness probe — uses Node's global fetch (avoids busybox wget flag quirks).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3002/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/index.js"]

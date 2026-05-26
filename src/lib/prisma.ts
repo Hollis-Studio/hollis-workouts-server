@@ -4,8 +4,19 @@
  * Prisma 7 with PrismaPg driver adapter (pg Pool).
  * No multi-tenancy — all workout models are owned by this service directly.
  * User FK relationships point to userId string (Identity Service is authoritative).
+ *
+ * TLS configuration (production only):
+ *   DATABASE_SSL_CA            — path or PEM string for the RDS CA bundle.
+ *                                When set, rejectUnauthorized defaults to true.
+ *   DATABASE_SSL_REJECT_UNAUTHORIZED — override to "false" to keep the old
+ *                                insecure behavior while DATABASE_SSL_CA is not
+ *                                yet provisioned.
+ *
+ * TODO(deploy): supply RDS CA bundle via DATABASE_SSL_CA and remove the
+ *   DATABASE_SSL_REJECT_UNAUTHORIZED=false workaround.
  */
 
+import fs from "fs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { Prisma, PrismaClient } from "../../prisma/generated/prisma/client.js";
@@ -19,9 +30,73 @@ const dbUrl = process.env.DATABASE_URL ?? "";
 
 const logDbQueries = process.env.LOG_DB_QUERIES === "true";
 
+// ---------------------------------------------------------------------------
+// TLS configuration for production Postgres connections.
+//
+// Priority:
+//   1. If DATABASE_SSL_CA is set: use it as the CA, default rejectUnauthorized
+//      to true (secure).  Set DATABASE_SSL_REJECT_UNAUTHORIZED=false to
+//      temporarily override while the CA bundle is being provisioned.
+//   2. If DATABASE_SSL_CA is not set: fall back to rejectUnauthorized=false
+//      (insecure — matches prior behavior).  Set
+//      DATABASE_SSL_REJECT_UNAUTHORIZED=true to opt in to strict mode without
+//      a CA (useful for databases with a public cert chain).
+//
+// TODO(deploy): set DATABASE_SSL_CA to the RDS CA bundle path and remove
+//   any DATABASE_SSL_REJECT_UNAUTHORIZED=false overrides.
+// ---------------------------------------------------------------------------
+
+function buildSslConfig(): Record<string, unknown> | boolean {
+  if (!isProduction) return false;
+
+  const caSource = process.env.DATABASE_SSL_CA;
+  const rejectOverride = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED;
+
+  if (caSource) {
+    // Resolve CA: treat as a file path if it exists on disk, else as a raw PEM.
+    let ca: string;
+    try {
+      ca = fs.existsSync(caSource) ? fs.readFileSync(caSource, "utf8") : caSource;
+    } catch {
+      ca = caSource;
+    }
+    const rejectUnauthorized = rejectOverride !== "false";
+    return { ca, rejectUnauthorized };
+  }
+
+  // No CA provided — keep legacy behavior (rejectUnauthorized: false) unless
+  // explicitly overridden.
+  // //DEFERRED(audit R1-D1): default stays insecure-but-connecting because the
+  // RDS CA is not yet provisioned and RDS's CA is NOT in Node's default trust
+  // store — flipping the default to `true` now would break the (not-yet-live)
+  // DB connection. Before production: set DATABASE_SSL_CA to the RDS bundle
+  // (https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem), which
+  // makes rejectUnauthorized default to true. A startup warning fires below
+  // whenever validation is disabled.
+  const rejectUnauthorized = rejectOverride === "true";
+  if (!rejectUnauthorized) {
+    logger.warn(
+      { component: "prisma" },
+      "TLS cert validation is disabled (rejectUnauthorized: false). " +
+        "Set DATABASE_SSL_CA to the RDS CA bundle to enable full cert validation.",
+    );
+  }
+  return { rejectUnauthorized };
+}
+
+const sslConfig = buildSslConfig();
+
 const pool = new Pool({
   connectionString: dbUrl,
-  ...(isProduction ? { ssl: { rejectUnauthorized: false } } : {}),
+  ...(sslConfig !== false ? { ssl: sslConfig } : {}),
+  // connectionTimeoutMillis surfaces pool exhaustion as a fast error instead of
+  // an indefinite hang (important on a small Fargate task).
+  connectionTimeoutMillis: 5_000,
+  idleTimeoutMillis: 30_000,
+  // //DEFERRED(audit R1-D5): `max` is provisional. Tune against the Fargate
+  // task size and RDS connection limit (N replicas × max ≤ RDS max_connections)
+  // once load characteristics are known.
+  max: 10,
 });
 
 const adapter = new PrismaPg(pool);
@@ -51,8 +126,6 @@ basePrisma.$on("error", (err) => {
 
 export const prisma = basePrisma as unknown as PrismaClient;
 
-process.on("beforeExit", () => {
-  basePrisma.$disconnect().catch((err: unknown) => {
-    logger.warn({ err }, "Failed to disconnect Prisma on beforeExit");
-  });
-});
+// NOTE: no `beforeExit` $disconnect hook — it never fires while the HTTP server
+// is listening (the event loop never drains naturally), and the SIGTERM/SIGINT
+// graceful shutdown in src/index.ts owns `prisma.$disconnect()` explicitly.

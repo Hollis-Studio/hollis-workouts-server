@@ -23,7 +23,9 @@ const envSchema = z.object({
 
   // Auth — delegated to Identity Service
   IDENTITY_SERVICE_URL: z.string().url().default("http://localhost:3001"),
-  IDENTITY_JWT_SECRET: z.string().min(8),
+  // HS256 signing key: require ≥32 bytes (256-bit) — the NIST SP 800-131A floor
+  // for HMAC-SHA256. An 8-char secret is brute-forceable offline from any token.
+  IDENTITY_JWT_SECRET: z.string().min(32),
   AUDIENCE: z.string().default("hollis-workouts"),
 
   // Logging

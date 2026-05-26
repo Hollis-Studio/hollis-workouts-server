@@ -1,6 +1,7 @@
 {
-  "_comment": "TODO(W5e): Replace with real ECS task definition. Mirror hollis-health-app/server/ops/ecs-task-def.json.",
+  "_comment": "TODO(W5e/DEFERRED-audit): PLACEHOLDER — replace before deploy. Mirror hollis-health-app/server/ops/ecs-task-def.json. executionRoleArn MUST grant ssm:GetParameters / secretsmanager:GetSecretValue on the three secret ARNs below, or ECS cannot inject them and the task crashes at validateEnv(). Each secret needs its OWN distinct ARN.",
   "family": "hollis-workouts-server",
+  "executionRoleArn": "PLACEHOLDER_EXECUTION_ROLE_ARN",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
@@ -16,9 +17,9 @@
         { "name": "AUDIENCE", "value": "hollis-workouts" }
       ],
       "secrets": [
-        { "name": "DATABASE_URL", "valueFrom": "PLACEHOLDER_SSM_ARN" },
-        { "name": "IDENTITY_JWT_SECRET", "valueFrom": "PLACEHOLDER_SSM_ARN" },
-        { "name": "IDENTITY_SERVICE_URL", "valueFrom": "PLACEHOLDER_SSM_ARN" }
+        { "name": "DATABASE_URL", "valueFrom": "PLACEHOLDER_SSM_ARN_DATABASE_URL" },
+        { "name": "IDENTITY_JWT_SECRET", "valueFrom": "PLACEHOLDER_SSM_ARN_IDENTITY_JWT_SECRET" },
+        { "name": "IDENTITY_SERVICE_URL", "valueFrom": "PLACEHOLDER_SSM_ARN_IDENTITY_SERVICE_URL" }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
