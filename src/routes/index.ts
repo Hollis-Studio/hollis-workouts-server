@@ -47,6 +47,12 @@ import { injuriesRouter } from "./injuries.js";
 import { conversationRollingSummaryRouter } from "./conversationRollingSummary.js";
 import { exercisesRouter } from "./exercises.js";
 import { metricBasketSnapshotsRouter } from "./metricBasketSnapshots.js";
+import { userProfileRouter } from "./userProfile.js";
+import { smartBuilderDraftRouter } from "./smartBuilderDraft.js";
+import { plateauCoachingRouter } from "./plateauCoaching.js";
+import { cancellationFeedbackRouter } from "./cancellationFeedback.js";
+import { aiTokenUsageRouter } from "./aiTokenUsage.js";
+import { aiRouter } from "./ai/index.js";
 
 // ── Root router ────────────────────────────────────────────────────────────────
 
@@ -69,3 +75,9 @@ apiRouter.use("/injuries", injuriesRouter);
 apiRouter.use("/conversation-rolling-summary", conversationRollingSummaryRouter);
 apiRouter.use("/exercises", exercisesRouter);
 apiRouter.use("/metric-basket-snapshots", metricBasketSnapshotsRouter);
+apiRouter.use("/profile", userProfileRouter);
+apiRouter.use("/smart-builder-draft", smartBuilderDraftRouter);
+apiRouter.use("/plateau-coaching", plateauCoachingRouter);
+apiRouter.use("/cancellation-feedback", cancellationFeedbackRouter);
+apiRouter.use("/ai-token-usage", aiTokenUsageRouter);
+apiRouter.use("/ai", aiRouter);

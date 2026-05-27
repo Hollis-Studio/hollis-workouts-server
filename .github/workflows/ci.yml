@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "staging", "dev"]
+  pull_request:
+    branches: ["main", "staging"]
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  # ── Typecheck ────────────────────────────────────────────────────────────
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@hollis-studio"
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+
+      - name: Generate Prisma client
+        run: DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy npm run prisma:generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+  # ── Lint ─────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@hollis-studio"
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+
+      - name: Generate Prisma client (needed for type resolution)
+        run: DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy npm run prisma:generate
+
+      # Standard lint pass (no type program — fast)
+      - name: Lint
+        run: npm run lint
+
+      # Type-aware lint pass (slower, full TS program)
+      - name: Lint (type-aware)
+        run: npm run lint:types
+
+  # ── Test ─────────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@hollis-studio"
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+
+      - name: Generate Prisma client
+        run: DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy npm run prisma:generate
+
+      - name: Run tests
+        run: npm test
+
+  # ── Security audit ───────────────────────────────────────────────────────
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@hollis-studio"
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+
+      - name: npm audit (high+)
+        # --omit=dev audits only the production dependency tree.
+        # Fails the build on HIGH or CRITICAL vulnerabilities.
+        run: npm audit --audit-level=high --omit=dev
+
+  # ── Docker build ─────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    # Only gate on the builds that matter; skip for Dependabot PRs that only
+    # bump lock files (no Dockerfile/src change).
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Write npmrc secret for Docker build
+        # Writes a temp .npmrc with the token so the BuildKit --secret mount works.
+        # The file is never committed and is cleaned up after the step.
+        run: |
+          cat > /tmp/npmrc-ci <<EOF
+          //npm.pkg.github.com/:_authToken=${{ secrets.NODE_AUTH_TOKEN }}
+          @hollis-studio:registry=https://npm.pkg.github.com
+          EOF
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: hollis-workouts-server:ci-${{ github.sha }}
+          secret-files: |
+            npmrc=/tmp/npmrc-ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Clean up npmrc secret
+        if: always()
+        run: rm -f /tmp/npmrc-ci

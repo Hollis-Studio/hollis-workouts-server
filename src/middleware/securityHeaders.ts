@@ -7,19 +7,26 @@
  * headers that are meaningful are cheaper to set directly and easy to test.
  *
  * Headers set:
- *   - X-Content-Type-Options: nosniff      — block MIME sniffing
- *   - X-Frame-Options: DENY                — no framing (defense in depth)
- *   - Referrer-Policy: no-referrer         — never leak URLs
- *   - X-DNS-Prefetch-Control: off          — no speculative DNS
- *   - Strict-Transport-Security            — force HTTPS for 2y incl. subdomains
+ *   - X-Content-Type-Options: nosniff          — block MIME sniffing
+ *   - X-Frame-Options: DENY                    — no framing (defense in depth)
+ *   - Referrer-Policy: no-referrer             — never leak URLs
+ *   - X-DNS-Prefetch-Control: off              — no speculative DNS
+ *   - Strict-Transport-Security                — force HTTPS for 2y incl. subdomains
+ *                                                (+ preload in production)
  *   - X-Permitted-Cross-Domain-Policies: none
+ *   - Cross-Origin-Opener-Policy: same-origin  — isolate browsing context
+ *   - Cross-Origin-Resource-Policy: cross-origin — allow mobile/native clients
+ *   - Origin-Agent-Cluster: ?1                 — opt in to process isolation
+ *   - Content-Security-Policy: default-src 'none'  — JSON API: no content to execute
  *
  * deps: express | consumers: src/app.ts
  */
 
 import type { NextFunction, Request, Response } from "express";
 
-const HSTS = "max-age=63072000; includeSubDomains";
+const HSTS_BASE = "max-age=63072000; includeSubDomains";
+const isProduction = process.env.NODE_ENV === "production";
+const HSTS = isProduction ? `${HSTS_BASE}; preload` : HSTS_BASE;
 
 export function securityHeaders(_req: Request, res: Response, next: NextFunction): void {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -28,5 +35,9 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
   res.setHeader("X-DNS-Prefetch-Control", "off");
   res.setHeader("X-Permitted-Cross-Domain-Policies", "none");
   res.setHeader("Strict-Transport-Security", HSTS);
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Origin-Agent-Cluster", "?1");
+  res.setHeader("Content-Security-Policy", "default-src 'none'");
   next();
 }

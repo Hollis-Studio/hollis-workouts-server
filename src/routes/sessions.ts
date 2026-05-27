@@ -62,11 +62,24 @@ const exercisesArraySchema = z.array(SessionExerciseSchema);
 
 // ---------------------------------------------------------------------------
 // List filters schema — parsed from req.query
+//
+// ?since      — filters by when the session OCCURRED (completedAt ≥ since, or
+//               startedAt ≥ since for in-progress sessions with no completedAt).
+//               This is the semantically correct param for "give me sessions
+//               from a date range" — clients use it for display and history.
+//               Implemented as: OR [ completedAt >= since, startedAt >= since ]
+//               so a session that started but hasn't completed yet is still
+//               returned if it started after the cutoff.
+//
+// ?updatedSince — filters by when the ROW was last modified (updatedAt ≥ value).
+//                 This is the correct param for offline-first sync-delta queries
+//                 ("give me everything that changed since my last pull").
 // ---------------------------------------------------------------------------
 
 const listFiltersSchema = z.object({
   status: z.enum(["active", "completed", "abandoned"]).optional(),
   since: z.string().datetime({ offset: true }).optional(),
+  updatedSince: z.string().datetime({ offset: true }).optional(),
   programId: z.string().optional(),
 });
 
@@ -78,7 +91,9 @@ const router = Router();
 
 // ── GET / — list user's sessions ───────────────────────────────────────────
 //
-// Filters: ?status=active|completed|abandoned, ?since=<ISO datetime>,
+// Filters: ?status=active|completed|abandoned
+//           ?since=<ISO datetime>        — occurrence-time filter (completedAt OR startedAt >= value)
+//           ?updatedSince=<ISO datetime> — row-modified-time filter (updatedAt >= value, for sync deltas)
 //           ?programId=<id>
 // Pagination: ?limit (default 50, max 200), ?cursor
 // Order: completedAt desc nulls last; ties broken by startedAt desc.
@@ -98,11 +113,22 @@ router.get(
     if (!filterResult.success) {
       throw AppError.badRequest("Invalid filter parameters", filterResult.error.issues);
     }
-    const { status, since, programId } = filterResult.data;
+    const { status, since, updatedSince, programId } = filterResult.data;
 
     const where: Record<string, unknown> = { userId: req.userId };
     if (status !== undefined) where.status = status;
-    if (since !== undefined) where.updatedAt = { gte: new Date(since) };
+    // ?since → session occurrence time (completedAt OR startedAt ≥ cutoff).
+    // OR keeps in-progress sessions (completedAt: null) visible when they
+    // started after the cutoff, which is the correct behaviour for history UIs.
+    if (since !== undefined) {
+      const sinceDate = new Date(since);
+      where.OR = [
+        { completedAt: { gte: sinceDate } },
+        { startedAt: { gte: sinceDate } },
+      ];
+    }
+    // ?updatedSince → row modification time (sync-delta queries).
+    if (updatedSince !== undefined) where.updatedAt = { gte: new Date(updatedSince) };
     if (programId !== undefined) where.programId = programId;
 
     const items = await prisma.session.findMany({

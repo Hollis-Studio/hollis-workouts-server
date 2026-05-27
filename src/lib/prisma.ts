@@ -8,12 +8,12 @@
  * TLS configuration (production only):
  *   DATABASE_SSL_CA            — path or PEM string for the RDS CA bundle.
  *                                When set, rejectUnauthorized defaults to true.
- *   DATABASE_SSL_REJECT_UNAUTHORIZED — override to "false" to keep the old
- *                                insecure behavior while DATABASE_SSL_CA is not
- *                                yet provisioned.
- *
- * TODO(deploy): supply RDS CA bundle via DATABASE_SSL_CA and remove the
- *   DATABASE_SSL_REJECT_UNAUTHORIZED=false workaround.
+ *                                Download from:
+ *                                https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+ *   DATABASE_SSL_REJECT_UNAUTHORIZED — "false" to temporarily disable cert
+ *                                verification while the CA bundle is being
+ *                                provisioned; "true" to opt-in to strict mode
+ *                                without a CA (public cert chain).
  */
 
 import fs from "fs";
@@ -42,8 +42,9 @@ const logDbQueries = process.env.LOG_DB_QUERIES === "true";
 //      DATABASE_SSL_REJECT_UNAUTHORIZED=true to opt in to strict mode without
 //      a CA (useful for databases with a public cert chain).
 //
-// TODO(deploy): set DATABASE_SSL_CA to the RDS CA bundle path and remove
-//   any DATABASE_SSL_REJECT_UNAUTHORIZED=false overrides.
+// Production readiness: set DATABASE_SSL_CA to the RDS global bundle path
+//   (https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem)
+//   before go-live to enable full TLS verification.
 // ---------------------------------------------------------------------------
 
 function buildSslConfig(): Record<string, unknown> | boolean {
@@ -66,20 +67,27 @@ function buildSslConfig(): Record<string, unknown> | boolean {
 
   // No CA provided — keep legacy behavior (rejectUnauthorized: false) unless
   // explicitly overridden.
-  // //DEFERRED(audit R1-D1): default stays insecure-but-connecting because the
-  // RDS CA is not yet provisioned and RDS's CA is NOT in Node's default trust
-  // store — flipping the default to `true` now would break the (not-yet-live)
-  // DB connection. Before production: set DATABASE_SSL_CA to the RDS bundle
-  // (https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem), which
-  // makes rejectUnauthorized default to true. A startup warning fires below
-  // whenever validation is disabled.
+  //
+  // NOTE: RDS's CA is NOT in Node's default trust store, so flipping this
+  // default to `true` without DATABASE_SSL_CA would immediately break the
+  // DB connection. Set DATABASE_SSL_CA to the RDS global bundle before go-live
+  // (https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem).
   const rejectUnauthorized = rejectOverride === "true";
   if (!rejectUnauthorized) {
-    logger.warn(
-      { component: "prisma" },
-      "TLS cert validation is disabled (rejectUnauthorized: false). " +
-        "Set DATABASE_SSL_CA to the RDS CA bundle to enable full cert validation.",
-    );
+    if (isProduction) {
+      logger.error(
+        { component: "prisma" },
+        "SECURITY: TLS verification is OFF (rejectUnauthorized: false) — " +
+          "DATABASE_SSL_CA is not set. All RDS connections are unverified. " +
+          "Set DATABASE_SSL_CA to the RDS CA bundle (global-bundle.pem) before go-live.",
+      );
+    } else {
+      logger.warn(
+        { component: "prisma" },
+        "TLS cert validation is disabled (rejectUnauthorized: false). " +
+          "Set DATABASE_SSL_CA to the RDS CA bundle to enable full cert validation.",
+      );
+    }
   }
   return { rejectUnauthorized };
 }

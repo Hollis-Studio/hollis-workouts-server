@@ -24,7 +24,11 @@ const env = validateEnv();
 
 import { logger } from "./lib/logger.js";
 import { prisma } from "./lib/prisma.js";
+import { initSentry } from "./lib/sentry.js";
 import { createApp } from "./app.js";
+
+// No-op when SENTRY_DSN is unset; otherwise wires error/perf capture before the app handles traffic.
+initSentry();
 
 const app = createApp();
 const port = env.PORT;

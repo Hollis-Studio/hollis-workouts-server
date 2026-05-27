@@ -10,13 +10,17 @@
  *   1. trust proxy (1 hop = AWS ALB) — so req.ip reads X-Forwarded-For
  *   2. requestContext — requestId + access log (before everything for correlation)
  *   3. securityHeaders
- *   4. health router — liveness/readiness BYPASS rate limiting AND auth
- *   5. apiRateLimiter — BEFORE the body parser so a throttled IP never has its
+ *   4. defaultCacheControl — sets Cache-Control: no-store, private as the DEFAULT
+ *      for every response. Route handlers (e.g. exercises catalog) may call
+ *      res.setHeader("Cache-Control", ...) later — last-write-wins overrides it.
+ *   5. health router — liveness/readiness BYPASS rate limiting AND auth
+ *   6. apiRateLimiter — BEFORE the body parser so a throttled IP never has its
  *      body buffered/parsed
- *   6. express.json (2mb) — JSON only; no urlencoded (JSON API; less surface)
- *   7. /v1 apiRouter — all resource routes (auth enforced inside)
- *   8. 404 catch-all — JSON envelope, not Express's default HTML
- *   9. errorHandler — last
+ *   7. express.json (2mb) — JSON only; no urlencoded (JSON API; less surface)
+ *   8. /v1 apiRouter — all resource routes (auth enforced inside)
+ *   9. 404 catch-all — JSON envelope, not Express's default HTML
+ *  10. Sentry error handler — captures unhandled errors before our errorHandler
+ *  11. errorHandler — last
  *
  * deps: express, middleware/*, routes/*, utils/response
  * consumers: src/index.ts, __tests__/helpers/setup.ts
@@ -28,9 +32,11 @@ import { apiRateLimiter } from "./middleware/rateLimit.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { requestContext } from "./middleware/requestContext.js";
 import { securityHeaders } from "./middleware/securityHeaders.js";
+import { defaultCacheControl } from "./middleware/cacheControl.js";
 import { healthRouter } from "./routes/health.js";
 import { apiRouter } from "./routes/index.js";
 import { sendError } from "./utils/response.js";
+import { Sentry } from "./lib/sentry.js";
 
 export function createApp(): Express {
   const app = express();
@@ -49,6 +55,12 @@ export function createApp(): Express {
   // Security response headers.
   app.use(securityHeaders);
 
+  // Default Cache-Control: no-store, private — applied before routes so every
+  // user-scoped response is non-cacheable by default.  Route handlers (e.g.
+  // exercises catalog at src/routes/exercises.ts) call res.setHeader() after
+  // this and override it — Express last-write-wins; no special ordering needed.
+  app.use(defaultCacheControl);
+
   // Health checks: unauthenticated AND un-rate-limited (ALB probes must always
   // succeed even while the API is shedding load).
   app.use(healthRouter);
@@ -66,6 +78,13 @@ export function createApp(): Express {
   app.use((_req, res) => {
     sendError(res, "Endpoint not found", 404, "NOT_FOUND");
   });
+
+  // Sentry error handler — must come AFTER routes and the 404 handler, but
+  // BEFORE our own errorHandler.  It captures unhandled errors and forwards
+  // them to the next error-handler via next(err).
+  // initSentry() must be called in src/index.ts before createApp(); if it was
+  // never called (DSN unset), setupExpressErrorHandler is a no-op passthrough.
+  Sentry.setupExpressErrorHandler(app);
 
   // Error handler (must be last).
   app.use(errorHandler);

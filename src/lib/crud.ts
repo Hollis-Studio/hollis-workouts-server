@@ -223,7 +223,6 @@ export function createCrudRouter<TBody extends z.ZodTypeAny>(
       // injuries that carry a meaningful event date, otherwise we use now).
       // updatedAt is always Prisma-managed and never accepted from the body.
       const rawData = bodyParsed.data as Record<string, unknown>;
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { createdAt: bodyCreatedAt, updatedAt: _updatedAt, userId: _userId, ...updateData } = rawData;
 
       // userId is always authoritative from the token — never from body.

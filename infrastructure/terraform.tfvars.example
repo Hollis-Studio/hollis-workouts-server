@@ -1,0 +1,45 @@
+aws_account_id        = "344345273019"
+aws_region            = "us-east-1"
+environment           = "prod"
+image_tag             = "latest"
+workouts_domain_name  = "workouts-api.hollis.health"
+alb_name              = "hollis-prod-alb"
+ecs_cluster_name      = "hollis-prod-cluster"
+rds_identifier        = "hollis-prod-postgres"
+rds_security_group_id = "sg-072f4e44c43356914"
+vpc_id                = "vpc-0abe755c07479d64a"
+
+# REQUIRED — obtain from ACM after the cert is issued for workouts-api.hollis.health
+# (or confirm the existing *.hollis.health wildcard cert covers this domain).
+certificate_arn = "arn:aws:acm:us-east-1:344345273019:certificate/REPLACE_ME"
+
+# REQUIRED — private subnet IDs in vpc-0abe755c07479d64a.
+# Run: aws ec2 describe-subnets --filters Name=vpc-id,Values=vpc-0abe755c07479d64a Name=tag:Tier,Values=private
+# then list them here:
+private_subnet_ids = ["subnet-REPLACE_ME_1", "subnet-REPLACE_ME_2"]
+
+desired_count         = 2
+cpu                   = 256
+memory                = 512
+log_level             = "info"
+identity_service_url  = "https://identity.hollis.health"
+
+# Set to true ONLY if you need a dedicated RDS instance for workouts.
+# Defaults to false (shares hollis-prod-postgres).
+create_dedicated_db = false
+
+# HS256 SHARED SECRET — REQUIRED.
+# MUST be the SAME value Hollis Identity signs HS256 tokens with.
+# A mismatch here means every authenticated request returns 401.
+# Do NOT commit the real value. Pass via:
+#   export TF_VAR_identity_jwt_secret="<shared-secret>"
+# or a gitignored terraform.tfvars file (add terraform.tfvars to .gitignore).
+# Minimum 32 characters (NIST SP 800-131A floor for HMAC-SHA256).
+identity_jwt_secret = "REPLACE_ME — must match Hollis Identity HS256 signing secret (min 32 chars)"
+
+# Vertex AI / Gemini model IDs — defaults match src/lib/env.ts; only override
+# if you need to point at a different model version.
+# google_cloud_location  = "global"
+# gemini_flash_model     = "gemini-3.1-flash-lite"
+# gemini_pro_model       = "gemini-3.1-pro-preview"
+# gemini_embedding_model = "gemini-embedding-001"

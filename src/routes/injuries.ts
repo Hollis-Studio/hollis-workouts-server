@@ -32,6 +32,8 @@
  */
 
 import { z } from "zod";
+import { MuscleGroupSchema } from "@hollis-studio/contracts/domain/muscles";
+import { AppError } from "../lib/AppError.js";
 import { prisma } from "../lib/prisma.js";
 import { createCrudRouter } from "../lib/crud.js";
 import type { Request } from "express";
@@ -69,8 +71,17 @@ function injuryListFilters(req: Request): Record<string, unknown> {
     filters.isActive = isActive !== "false";
   }
 
-  if (muscleGroup) {
-    filters.muscleGroup = muscleGroup;
+  if (muscleGroup !== undefined && muscleGroup !== "") {
+    // Validate against the canonical MuscleGroup enum from @hollis-studio/contracts.
+    // safeParse returns a typed union; on failure we throw 400 before touching Prisma.
+    const parsed = MuscleGroupSchema.safeParse(muscleGroup);
+    if (!parsed.success) {
+      throw AppError.badRequest(
+        `Invalid muscleGroup: "${muscleGroup}" is not a recognised muscle group`,
+        parsed.error.issues,
+      );
+    }
+    filters.muscleGroup = parsed.data;
   }
 
   return filters;

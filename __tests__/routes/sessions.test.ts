@@ -11,7 +11,7 @@
  *   - Hard delete with CASCADE:
  *       1. findFirst ownership check
  *       2. prisma.$transaction([metricBasketSnapshotRecord.deleteMany(...), session.delete(...)])
- *   - List filters: ?status, ?since (maps to updatedAt >=), ?programId
+ *   - List filters: ?status, ?since (OR completedAt/startedAt >=), ?updatedSince (updatedAt >=), ?programId
  *   - Body uses ActiveTrainingSessionLogSchema from @hollis-studio/contracts
  *     (exercises array may be empty — covers in-progress sessions)
  *
@@ -171,17 +171,39 @@ describe("GET /v1/sessions", () => {
     expect(findManyArgs.where).toMatchObject({ userId: TEST_USER_ID, status: "completed" });
   });
 
-  it("applies ?since filter as updatedAt: { gte: Date } in the where clause", async () => {
+  it("applies ?since filter as OR [completedAt/startedAt >= Date] in the where clause", async () => {
     prismaMock.session.findMany.mockResolvedValue([]);
     const since = "2025-06-01T00:00:00Z";
+    const sinceDate = new Date(since);
 
     await auth.get(`/v1/sessions?since=${encodeURIComponent(since)}`);
 
     const [findManyArgs] = prismaMock.session.findMany.mock.calls[0];
     expect(findManyArgs.where).toMatchObject({ userId: TEST_USER_ID });
+    // ?since uses an OR clause on occurrence time (completedAt OR startedAt)
+    expect(Array.isArray(findManyArgs.where.OR)).toBe(true);
+    expect(findManyArgs.where.OR).toHaveLength(2);
+    expect(findManyArgs.where.OR[0].completedAt.gte).toBeInstanceOf(Date);
+    expect(findManyArgs.where.OR[0].completedAt.gte.toISOString()).toBe(sinceDate.toISOString());
+    expect(findManyArgs.where.OR[1].startedAt.gte).toBeInstanceOf(Date);
+    expect(findManyArgs.where.OR[1].startedAt.gte.toISOString()).toBe(sinceDate.toISOString());
+    // ?since must NOT set updatedAt — that is ?updatedSince
+    expect(findManyArgs.where.updatedAt).toBeUndefined();
+  });
+
+  it("applies ?updatedSince filter as updatedAt: { gte: Date } in the where clause", async () => {
+    prismaMock.session.findMany.mockResolvedValue([]);
+    const updatedSince = "2025-06-01T00:00:00Z";
+
+    await auth.get(`/v1/sessions?updatedSince=${encodeURIComponent(updatedSince)}`);
+
+    const [findManyArgs] = prismaMock.session.findMany.mock.calls[0];
+    expect(findManyArgs.where).toMatchObject({ userId: TEST_USER_ID });
     expect(findManyArgs.where.updatedAt).toBeDefined();
     expect(findManyArgs.where.updatedAt.gte).toBeInstanceOf(Date);
-    expect(findManyArgs.where.updatedAt.gte.toISOString()).toBe(new Date(since).toISOString());
+    expect(findManyArgs.where.updatedAt.gte.toISOString()).toBe(new Date(updatedSince).toISOString());
+    // ?updatedSince must NOT set the OR occurrence-time clause
+    expect(findManyArgs.where.OR).toBeUndefined();
   });
 
   it("applies ?programId filter in the where clause", async () => {
@@ -207,7 +229,9 @@ describe("GET /v1/sessions", () => {
       status: "active",
       programId: "prog-xyz",
     });
-    expect(findManyArgs.where.updatedAt).toBeDefined();
+    // ?since sets the OR occurrence-time clause
+    expect(Array.isArray(findManyArgs.where.OR)).toBe(true);
+    expect(findManyArgs.where.OR).toHaveLength(2);
   });
 
   it("omits absent optional filters from the where clause", async () => {
@@ -217,6 +241,7 @@ describe("GET /v1/sessions", () => {
 
     const [findManyArgs] = prismaMock.session.findMany.mock.calls[0];
     expect(findManyArgs.where).not.toHaveProperty("status");
+    expect(findManyArgs.where).not.toHaveProperty("OR");
     expect(findManyArgs.where).not.toHaveProperty("updatedAt");
     expect(findManyArgs.where).not.toHaveProperty("programId");
   });

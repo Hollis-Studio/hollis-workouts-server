@@ -1,7 +1,7 @@
 // ============================================================================
 // Hollis Workouts Server — Prisma Schema
 // ============================================================================
-// 13 SYNCED_COLLECTIONS + CanonicalExercise catalog
+// 13 SYNCED_COLLECTIONS + CanonicalExercise catalog + SmartReaderUsage counter
 //
 // Design rules:
 //   - Every user-scoped model has userId String indexed (not a FK — Identity
@@ -11,7 +11,7 @@
 //     No @default(now()) — set explicitly at write time in ISO UTC.
 //   - Deeply nested sub-documents (set arrays, day arrays, interval arrays) are
 //     stored as Json columns validated by the matching Zod schema at read/write.
-//   - CanonicalExercise is NOT user-scoped (global catalog). TODO(W5d): seed.
+//   - CanonicalExercise is NOT user-scoped (global catalog). Seed: npm run prisma:seed
 // ============================================================================
 
 generator client {
@@ -147,7 +147,8 @@ model ProgressionBaseline {
   /// BaselineEntry[] — history of qualifying sets; stored as Json
   history                       Json
   phaseExitE1RM_Kg              Float?
-  phaseExitDate                 Int?
+  /// Float (double precision) — stores epoch-milliseconds; Int overflows int4 (max ~2.1e9 < current epoch ~1.7e12).
+  phaseExitDate                 Float?
   /// classMix { s, h, e } — stored as Json
   classMix                      Json?
   trendE1RM_Kg                  Float?
@@ -480,10 +481,183 @@ model MetricBasketSnapshotRecord {
 }
 
 // ============================================================================
+// 14. UserProfile (singleton per user — path: users/{uid})
+//     Shape: UserProfile + UserSettings + UserEntitlements from src/types/models/user.ts
+//     One row per user; userId IS the PK (mirrors Firestore singleton doc pattern).
+//     settings and entitlements are stored as Json — they are deeply nested, rarely
+//     queried individually, and evolve frequently. Scalar fields that ARE queried
+//     (fcmDeviceToken for push scheduling, smartReaderFreeUsesRemaining for gates)
+//     are promoted to columns.
+// ============================================================================
+
+model UserProfile {
+  /// userId is the PK — one profile per user (mirrors Firestore users/{uid} singleton).
+  userId                      String    @id
+  displayName                 String
+  email                       String?
+  /// Epoch-ms timestamp stored as Float (double precision) to avoid int4 overflow.
+  /// Float represents integer epoch-ms exactly below 2^53.
+  fcmDeviceToken              String?
+  lastFcmTokenUpdate          DateTime?
+  smartReaderFreeUsesRemaining Int?
+  lastReviewPromptAt          DateTime?
+  /// UserSettings — deeply nested, rarely column-queried; stored as Json
+  settings                    Json
+  /// UserEntitlements — optional, deeply nested; stored as Json
+  entitlements                Json?
+  createdAt                   DateTime
+  updatedAt                   DateTime  @updatedAt
+
+  @@map("user_profiles")
+}
+
+// ============================================================================
+// 15. PlateauCoachingArtifact (collection: plateauCoaching)
+//     Shape: PlateauCoachingArtifact from src/types/models/ai.ts
+//     Path: users/{uid}/plateauCoaching/{plateauId}
+//     Read-only on client via loadPlateauCoachingArtifact; written by Cloud Functions.
+// ============================================================================
+
+model PlateauCoachingArtifact {
+  id           String    @id
+  userId       String
+  exerciseId   String
+  detectedAt   DateTime
+  narrative    String
+  /// String[] — root causes identified by the AI coach; Postgres text array
+  rootCauses   String[]
+  /// String[] — AI recommendations; Postgres text array
+  recommendations String[]
+  dismissedAt  DateTime?
+  /// { input?: number; output?: number } — token counts from the AI call; stored as Json
+  tokenCount   Json?
+  createdAt    DateTime
+  updatedAt    DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([userId, exerciseId])
+  @@index([userId, detectedAt])
+  @@map("plateau_coaching_artifacts")
+}
+
+// ============================================================================
+// 16. CancellationFeedback (collection: cancellationFeedback)
+//     Shape: from src/services/cancellationFeedback.ts
+//     Path: users/{uid}/cancellationFeedback (addDoc — auto-id, append-only).
+//     option = CancellationFeedbackOption enum value.
+//     No updatedAt — records are immutable once written.
+// ============================================================================
+
+model CancellationFeedback {
+  id        String  @id
+  userId    String
+  /// CancellationFeedbackOption enum value
+  option    String
+  detail    String?
+  createdAt DateTime
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@map("cancellation_feedback")
+}
+
+// ============================================================================
+// 17. SmartBuilderDraft — singleton draft per user
+//     Shape: mirrors the Firestore singleton at users/{uid}/smartBuilderDraft
+//     userId IS the PK (one draft per user, upserted in-place).
+//     payload stores the full in-progress program builder state as a Json blob
+//     (program skeleton, day configuration, exercise selections, AI suggestions)
+//     that the client reconstitutes on re-open.
+// ============================================================================
+
+model SmartBuilderDraft {
+  /// userId is the PK — one draft per user (singleton, upserted on every save)
+  userId    String   @id
+  /// Full builder state blob — ProgramDraft shape validated by the app's Zod schema at read/write
+  payload   Json
+  createdAt DateTime
+  updatedAt DateTime @updatedAt
+
+  @@map("smart_builder_drafts")
+}
+
+// ============================================================================
+// 18. AiTokenUsage — monthly AI token telemetry per user
+//     Shape: mirrors Firestore users/{uid}/aiUsage/{yyyy-mm} documents.
+//     Each doc stores a `tokens` map of feature → counter (Record<string, number>)
+//     as confirmed by tokenUsage.ts (raw['tokens'] is Record<string, unknown>,
+//     each value cast to number). The Json column stores that same map verbatim.
+//     Unique constraint on (userId, month) mirrors the Firestore doc-id pattern.
+// ============================================================================
+
+model AiTokenUsage {
+  id        String   @id
+  userId    String
+  /// ISO month key — "yyyy-mm" (matches Firestore doc id)
+  month     String
+  /// Record<string, number> — feature → token count map (e.g. { smart_builder: 1200, plateau_coach: 400 })
+  tokens    Json
+  createdAt DateTime
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, month])
+  @@index([userId])
+  @@map("ai_token_usage")
+}
+
+// ============================================================================
+// 19. SmartReaderUsage — monthly free-use counter for Smart Reader (equipment recognition)
+//     Tracks non-entitled usage per (userId, month) so the server can enforce
+//     SMART_READER_FREE_USES limit without relying on client-side state.
+//     Entitled users (hollisIntelligence) bypass this table entirely.
+//     month format: "yyyy-mm" (matches AiTokenUsage.month convention).
+// ============================================================================
+
+model SmartReaderUsage {
+  /// userId is part of the composite PK — one row per user per calendar month.
+  userId    String
+  /// ISO month key — "yyyy-mm"
+  month     String
+  /// Number of Smart Reader calls made this month (non-entitled path only).
+  count     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@id([userId, month])
+  @@index([userId])
+  @@map("smart_reader_usage")
+}
+
+// ============================================================================
+// 20. ExerciseEmbeddingCache — global (not user-scoped) semantic search cache
+//     Avoids re-embedding the static CanonicalExercise catalog on every
+//     semantic search call. Keyed by (canonicalExerciseId, modelVersion) so that
+//     a model upgrade automatically produces new embeddings while old ones remain.
+//     sourceTextHash (SHA-256 of the concatenated embedding source text) allows
+//     cache invalidation when exercise name/description changes without a model bump.
+// ============================================================================
+
+model ExerciseEmbeddingCache {
+  id                  String   @id
+  /// Canonical exercise slug this embedding covers (e.g. "cable_bicep_curl")
+  canonicalExerciseId String
+  /// Embedding model version string (e.g. "text-embedding-004")
+  modelVersion        String
+  /// SHA-256 hex of the text used to generate the embedding — for cache invalidation
+  sourceTextHash      String
+  /// Raw embedding vector — Float[] (double precision array in Postgres)
+  embedding           Float[]
+  createdAt           DateTime
+
+  @@unique([canonicalExerciseId, modelVersion])
+  @@map("exercise_embedding_cache")
+}
+
+// ============================================================================
 // 14. CanonicalExercise — global catalog (NOT user-scoped)
 //     Shape: CanonicalExercise from Workouts models.ts + CanonicalExerciseSchema
 //     NOT in SYNCED_COLLECTIONS — read-only reference data.
-//     TODO(W5d): Seed from Firestore exercises export.
+//     Seed: prisma/seed-exercises.ts — reads hollis-workouts/scripts/data/exercises.json
+//       and upserts in batches. Run: npm run prisma:seed
 //     TODO(W5f): Add admin write endpoint if catalog needs server-side updates.
 // ============================================================================
 

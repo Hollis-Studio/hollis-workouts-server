@@ -1,7 +1,20 @@
 {
-  "_comment": "TODO(W5e/DEFERRED-audit): PLACEHOLDER — replace before deploy. Mirror hollis-health-app/server/ops/ecs-task-def.json. executionRoleArn MUST grant ssm:GetParameters / secretsmanager:GetSecretValue on the three secret ARNs below, or ECS cannot inject them and the task crashes at validateEnv(). Each secret needs its OWN distinct ARN.",
+  "_comment": [
+    "SOURCE OF TRUTH: infrastructure/ecs.tf (Terraform). This file is the",
+    "non-Terraform fallback path — used only when registering a task definition",
+    "directly via the AWS CLI without running `terraform apply`.",
+    "",
+    "Run `ops/render-task-def.sh` to substitute ${PLACEHOLDER} values before",
+    "registering. executionRoleArn MUST grant secretsmanager:GetSecretValue on",
+    "ALL secret ARNs below, or ECS cannot inject them and the task crashes at",
+    "validateEnv(). Each secret needs its OWN distinct ARN.",
+    "",
+    "taskRoleArn MUST grant any AWS API permissions the container code uses",
+    "(e.g., s3:GetObject, cloudwatch:PutMetricData). Distinct from executionRoleArn."
+  ],
   "family": "hollis-workouts-server",
-  "executionRoleArn": "PLACEHOLDER_EXECUTION_ROLE_ARN",
+  "executionRoleArn": "${EXECUTION_ROLE_ARN}",
+  "taskRoleArn": "${TASK_ROLE_ARN}",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
@@ -9,25 +22,67 @@
   "containerDefinitions": [
     {
       "name": "workouts-server",
-      "image": "PLACEHOLDER_ECR_IMAGE_URI",
+      "image": "${ECR_IMAGE_URI}",
       "portMappings": [{ "containerPort": 3002, "protocol": "tcp" }],
       "environment": [
         { "name": "NODE_ENV", "value": "production" },
         { "name": "PORT", "value": "3002" },
-        { "name": "AUDIENCE", "value": "hollis-workouts" }
+        { "name": "AUDIENCE", "value": "hollis-workouts" },
+        { "name": "LOG_LEVEL", "value": "info" },
+        { "name": "AWS_REGION", "value": "${AWS_REGION}" },
+        { "name": "GOOGLE_CLOUD_LOCATION", "value": "global" },
+        { "name": "GEMINI_FLASH_MODEL", "value": "gemini-3.1-flash-lite" },
+        { "name": "GEMINI_PRO_MODEL", "value": "gemini-3.1-pro-preview" },
+        { "name": "GEMINI_EMBEDDING_MODEL", "value": "gemini-embedding-001" }
       ],
       "secrets": [
-        { "name": "DATABASE_URL", "valueFrom": "PLACEHOLDER_SSM_ARN_DATABASE_URL" },
-        { "name": "IDENTITY_JWT_SECRET", "valueFrom": "PLACEHOLDER_SSM_ARN_IDENTITY_JWT_SECRET" },
-        { "name": "IDENTITY_SERVICE_URL", "valueFrom": "PLACEHOLDER_SSM_ARN_IDENTITY_SERVICE_URL" }
+        { "name": "DATABASE_URL", "valueFrom": "${SSM_ARN_DATABASE_URL}" },
+        {
+          "_comment": "PEM-encoded RDS CA bundle. Required when DATABASE_URL uses ?sslmode=verify-full.",
+          "name": "DATABASE_SSL_CA",
+          "valueFrom": "${SSM_ARN_DATABASE_SSL_CA}"
+        },
+        { "name": "IDENTITY_JWT_SECRET", "valueFrom": "${SSM_ARN_IDENTITY_JWT_SECRET}" },
+        { "name": "IDENTITY_SERVICE_URL", "valueFrom": "${SSM_ARN_IDENTITY_SERVICE_URL}" },
+        {
+          "_comment": "Optional — Sentry SDK is a no-op when DSN is absent.",
+          "name": "SENTRY_DSN",
+          "valueFrom": "${SSM_ARN_SENTRY_DSN}"
+        },
+        {
+          "_comment": "Optional — RevenueCat entitlement check is bypassed when absent.",
+          "name": "REVENUECAT_REST_API_KEY",
+          "valueFrom": "${SSM_ARN_REVENUECAT_REST_API_KEY}"
+        },
+        {
+          "_comment": "Optional — Vertex AI routes return a clear error at runtime when absent.",
+          "name": "GOOGLE_CLOUD_PROJECT",
+          "valueFrom": "${SSM_ARN_GOOGLE_CLOUD_PROJECT}"
+        },
+        {
+          "_comment": "Service-account key JSON for Vertex AI ADC. ops/entrypoint.sh writes it to /tmp/gcp-sa.json and exports GOOGLE_APPLICATION_CREDENTIALS.",
+          "name": "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+          "valueFrom": "${SSM_ARN_GOOGLE_APPLICATION_CREDENTIALS_JSON}"
+        }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
           "awslogs-group": "/ecs/hollis-workouts-server",
-          "awslogs-region": "us-east-1",
-          "awslogs-stream-prefix": "ecs"
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
         }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3002/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+        ],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 20
       }
     }
   ]

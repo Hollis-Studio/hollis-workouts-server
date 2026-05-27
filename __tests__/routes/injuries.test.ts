@@ -171,6 +171,16 @@ describe("GET /v1/injuries", () => {
     expect(res.status).toBe(200);
     expect(res.body.data.items).toEqual([]);
   });
+
+  it("returns 400 when ?muscleGroup is not a recognised enum value", async () => {
+    // No Prisma mock needed — the route should reject before touching the DB.
+    const res = await auth.get("/v1/injuries?muscleGroup=not-a-real-muscle");
+
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.err.code).toBe("VALIDATION_ERROR");
+    expect(prismaMock.injuryRecord.findMany).not.toHaveBeenCalled();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -7,3 +7,10 @@ coverage/
 .tsbuildinfo
 *.log
 prisma/generated/
+
+# Terraform — provider/plugin cache and any real (secret-bearing) tfvars.
+infrastructure/.terraform/
+*.tfvars
+!*.tfvars.example
+# Rendered ECS task def may contain real ARNs/account IDs.
+ops/*.rendered.json

@@ -15,9 +15,10 @@
 
 import rateLimit from "express-rate-limit";
 import type { Request } from "express";
+import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 
-const isTest = () => process.env.NODE_ENV === "test";
+const isTest = () => env.NODE_ENV === "test";
 
 /**
  * General API rate limiter — 100 requests per minute per IP.

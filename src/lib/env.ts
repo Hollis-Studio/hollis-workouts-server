@@ -29,7 +29,35 @@ const envSchema = z.object({
   AUDIENCE: z.string().default("hollis-workouts"),
 
   // Logging
-  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "fatal"]).default("info"),
+
+  // Error tracking (optional — Sentry disabled when unset)
+  SENTRY_DSN: z.string().url().optional(),
+
+  // AI (Vertex AI via ADC). Optional so the server boots without AI creds;
+  // AI routes return a clear error at runtime when GOOGLE_CLOUD_PROJECT is unset.
+  GOOGLE_CLOUD_PROJECT: z.string().optional(),
+  GOOGLE_CLOUD_LOCATION: z.string().default("global"),
+  GEMINI_FLASH_MODEL: z.string().default("gemini-3.1-flash-lite"),
+  GEMINI_PRO_MODEL: z.string().default("gemini-3.1-pro-preview"),
+  GEMINI_EMBEDDING_MODEL: z.string().default("gemini-embedding-001"),
+
+  // Entitlements (optional — RevenueCat check is bypassed/denied when unset)
+  REVENUECAT_REST_API_KEY: z.string().optional(),
+
+  // Database TLS — production Postgres / RDS
+  // DATABASE_SSL_CA: file path or raw PEM string for the RDS CA bundle.
+  //   When set, rejectUnauthorized defaults to true (secure).
+  //   Download from https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+  DATABASE_SSL_CA: z.string().optional(),
+  // DATABASE_SSL_REJECT_UNAUTHORIZED: override the rejectUnauthorized behaviour.
+  //   "false" — disable cert verification even when DATABASE_SSL_CA is set.
+  //   "true"  — force cert verification even when DATABASE_SSL_CA is absent.
+  //   Absent  — default behaviour (true when CA is set, false otherwise).
+  DATABASE_SSL_REJECT_UNAUTHORIZED: z.enum(["true", "false"]).optional(),
+
+  // Smart Reader free-use limit for non-entitled users (default: 5 per month).
+  SMART_READER_FREE_USES: z.coerce.number().int().min(0).default(5),
 });
 
 // ============================================================================

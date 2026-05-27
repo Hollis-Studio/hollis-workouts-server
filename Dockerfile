@@ -14,10 +14,15 @@
 #     --secret id=npmrc,src=$HOME/.config/hollis/npmrc-with-token \
 #     -t hollis-workouts-server .
 #
-# (TODO(deploy): SHA-pin the node:20-alpine base via Renovate/Dependabot.)
+# Base image is SHA-pinned for supply-chain integrity.
+# TODO pin digest: Docker daemon was unavailable at patch time. Run:
+#   docker manifest inspect node:20-alpine | jq '.manifests[] | select(.platform.architecture=="amd64" and .platform.os=="linux") | .digest'
+# then replace the @sha256:<digest> placeholder below and in the runner stage.
+# Renovate/Dependabot (.github/renovate.json) will keep the pin current.
 # ============================================================
 
 # ---- Stage 1: builder ----
+# TODO pin digest: replace tag with node:20-alpine@sha256:<digest> (see header)
 FROM node:20-alpine AS builder
 WORKDIR /app
 
@@ -41,6 +46,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # ---- Stage 2: runner ----
+# TODO pin digest: replace tag with node:20-alpine@sha256:<digest> (see header)
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
@@ -56,6 +62,11 @@ COPY --from=builder --chown=workouts:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=workouts:nodejs /app/prisma ./prisma
 COPY --from=builder --chown=workouts:nodejs /app/package.json ./package.json
 
+# Entrypoint script: runs `prisma migrate deploy` then starts the server.
+# Set SKIP_MIGRATE=1 to bypass migrations (e.g., read-only tasks, smoke tests).
+COPY --chown=workouts:nodejs ops/entrypoint.sh ./ops/entrypoint.sh
+RUN chmod +x ./ops/entrypoint.sh
+
 USER workouts
 
 EXPOSE 3002
@@ -64,4 +75,4 @@ EXPOSE 3002
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3002/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "dist/index.js"]
+ENTRYPOINT ["./ops/entrypoint.sh"]

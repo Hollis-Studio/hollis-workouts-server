@@ -78,6 +78,13 @@ export const prismaMock = {
   conversationRollingSummary: makeModelMock(),
   metricBasketSnapshotRecord: makeModelMock(),
   canonicalExercise: makeModelMock(),
+  // New models (Wave 2b routes)
+  userProfile: makeModelMock(),
+  smartBuilderDraft: makeModelMock(),
+  plateauCoachingArtifact: makeModelMock(),
+  cancellationFeedback: makeModelMock(),
+  aiTokenUsage: makeModelMock(),
+  smartReaderUsage: makeModelMock(),
   $transaction: vi.fn(),
   $queryRaw: vi.fn().mockResolvedValue([{ "?column?": 1 }]),
   $disconnect: vi.fn(),

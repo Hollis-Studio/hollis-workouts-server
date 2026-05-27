@@ -14,7 +14,7 @@ function getDefaultLogLevel(): string {
   return "info";
 }
 
-const VALID_LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
+const VALID_LOG_LEVELS = ["debug", "info", "warn", "error", "fatal"] as const;
 type ValidLogLevel = (typeof VALID_LOG_LEVELS)[number];
 
 const rawLevel = process.env.LOG_LEVEL;
@@ -34,11 +34,18 @@ export const logger = pino({
     paths: [
       "req.headers.authorization",
       "req.headers.cookie",
+      "req.body",
+      "req.query",
+      "res.body",
       "token",
       "refreshToken",
       "accessToken",
+      "password",
+      "apiKey",
       "*.token",
       "*.accessToken",
+      "*.password",
+      "*.apiKey",
     ],
     remove: true,
   },
