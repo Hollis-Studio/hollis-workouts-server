@@ -31,8 +31,13 @@ const envSchema = z.object({
   // Logging
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "fatal"]).default("info"),
 
-  // Error tracking (optional — Sentry disabled when unset)
-  SENTRY_DSN: z.string().url().optional(),
+  // Error tracking (optional — Sentry disabled when unset). A blank value is
+  // treated as unset so an empty secret/env var disables Sentry rather than
+  // failing URL validation.
+  SENTRY_DSN: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().url().optional(),
+  ),
 
   // AI (Vertex AI via ADC). Optional so the server boots without AI creds;
   // AI routes return a clear error at runtime when GOOGLE_CLOUD_PROJECT is unset.

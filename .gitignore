@@ -12,5 +12,8 @@ prisma/generated/
 infrastructure/.terraform/
 *.tfvars
 !*.tfvars.example
+# Terraform state holds secrets/ARNs — never commit it.
+*.tfstate
+*.tfstate.*
 # Rendered ECS task def may contain real ARNs/account IDs.
 ops/*.rendered.json

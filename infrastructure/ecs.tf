@@ -206,10 +206,14 @@ resource "aws_ecs_service" "workouts" {
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
 
+  # Public subnets + public IP (egress via IGW), matching hollis-prod-api. The
+  # private subnets have no NAT/VPC endpoints, so tasks there can't reach
+  # Secrets Manager/ECR. The ECS SG only allows ingress from the shared ALB,
+  # so the public IP is egress-only.
   network_configuration {
-    subnets          = var.private_subnet_ids
+    subnets          = var.public_subnet_ids
     security_groups  = [aws_security_group.ecs.id]
-    assign_public_ip = false
+    assign_public_ip = true
   }
 
   load_balancer {

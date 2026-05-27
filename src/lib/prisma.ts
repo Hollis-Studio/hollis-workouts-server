@@ -94,8 +94,28 @@ function buildSslConfig(): Record<string, unknown> | boolean {
 
 const sslConfig = buildSslConfig();
 
+// pg derives TLS settings from both the connection string's libpq params
+// (sslmode/sslrootcert/etc.) AND the explicit `ssl` option. Newer pg parses
+// `sslmode=require` as `verify-full`, which shadows our CA-based `ssl` object
+// and surfaces as "self-signed certificate in certificate chain" even though
+// the correct RDS CA is supplied. Strip libpq SSL params from the URL the Pool
+// uses so the `ssl` object below is the single source of truth. Prisma's
+// migrate engine reads DATABASE_URL directly and is unaffected.
+function stripLibpqSslParams(url: string): string {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    for (const p of ["sslmode", "ssl", "sslrootcert", "sslcert", "sslkey", "sslnegotiation"]) {
+      u.searchParams.delete(p);
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 const pool = new Pool({
-  connectionString: dbUrl,
+  connectionString: stripLibpqSslParams(dbUrl),
   ...(sslConfig !== false ? { ssl: sslConfig } : {}),
   // connectionTimeoutMillis surfaces pool exhaustion as a fast error instead of
   // an indefinite hang (important on a small Fargate task).

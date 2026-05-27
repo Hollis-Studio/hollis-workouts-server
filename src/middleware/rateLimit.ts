@@ -13,7 +13,7 @@
  * deps: express-rate-limit | consumers: src/index.ts, src/lib/crud.ts, src/routes/*
  */
 
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import type { Request } from "express";
 import { env } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
@@ -59,7 +59,9 @@ export const apiRateLimiter = rateLimit({
 export const writeRateLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 60,
-  keyGenerator: (req: Request) => req.userId ?? req.ip ?? "unknown",
+  // IPv6 fallback must go through ipKeyGenerator so a single IPv6 client can't
+  // rotate addresses within its /64 to bypass the limit (ERR_ERL_KEY_GEN_IPV6).
+  keyGenerator: (req: Request) => req.userId ?? (req.ip ? ipKeyGenerator(req.ip) : "unknown"),
   handler: (req, res, _next, options) => {
     // Prefer the actual window reset time over the full window length so a
     // client mid-window isn't told to wait the maximum every time.

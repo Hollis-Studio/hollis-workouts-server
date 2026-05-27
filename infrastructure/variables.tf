@@ -72,11 +72,15 @@ variable "vpc_id" {
 }
 
 variable "private_subnet_ids" {
-  description = "List of private subnet IDs in the shared VPC for ECS task placement."
+  description = "Private subnet IDs in the shared VPC (currently unused: no NAT/VPC endpoints exist, so tasks run in public subnets instead)."
   type        = list(string)
-  # Kickback: real subnet IDs are not in the provided inventory; supply at apply time.
-  # Example: ["subnet-aaaa1111", "subnet-bbbb2222"]
-  default = []
+  default     = ["subnet-0d5672f9161c08a46", "subnet-0d8d2cf589dcad61e"]
+}
+
+variable "public_subnet_ids" {
+  description = "Public subnet IDs in the shared VPC for ECS task placement (egress via IGW with a public IP; matches hollis-prod-api)."
+  type        = list(string)
+  default     = ["subnet-0dcd09f364647e0a3", "subnet-04d00419be5cb0802"]
 }
 
 variable "desired_count" {

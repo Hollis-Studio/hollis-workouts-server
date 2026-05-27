@@ -11,7 +11,7 @@ data "aws_vpc" "shared" {
 # ---------------------------------------------------------------------------
 resource "aws_security_group" "ecs" {
   name        = "${local.name}-ecs"
-  description = "Workouts ECS tasks — ingress from shared ALB only"
+  description = "Workouts ECS tasks - ingress from shared ALB only"
   vpc_id      = data.aws_vpc.shared.id
 }
 

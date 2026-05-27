@@ -60,6 +60,7 @@ RUN apk add --no-cache openssl && \
 COPY --from=builder --chown=workouts:nodejs /app/dist ./dist
 COPY --from=builder --chown=workouts:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=workouts:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=workouts:nodejs /app/prisma.config.ts ./prisma.config.ts
 COPY --from=builder --chown=workouts:nodejs /app/package.json ./package.json
 
 # Entrypoint script: runs `prisma migrate deploy` then starts the server.
