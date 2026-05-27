@@ -34,7 +34,8 @@ export function getGeminiClient(): GoogleGenAI | null {
   if (_client) return _client;
 
   const project = env.GOOGLE_CLOUD_PROJECT;
-  if (!project) {
+  // Treat blank/whitespace-only values as unset so placeholder strings don't instantiate a broken client.
+  if (!project || project.trim() === "") {
     return null;
   }
 
