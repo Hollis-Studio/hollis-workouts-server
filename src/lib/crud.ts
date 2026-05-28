@@ -13,7 +13,7 @@
  *   GET    /          — list (user-scoped, optional query filters via listFilters hook)
  *   GET    /:id       — findFirst by { id, userId } → 404 if absent (IDOR-safe)
  *   PUT    /:id       — idempotent upsert by { id, userId } (offline-first client IDs)
- *   DELETE /:id       — hard delete (deleteStyle: 'hard') or
+ *   DELETE /:id       — tombstone delete — sets deletedAt (deleteStyle: 'hard') or
  *   PATCH  /:id       — soft delete — sets isActive:false (deleteStyle: 'soft')
  *
  * Key design decisions:
@@ -133,6 +133,13 @@ export function createCrudRouter<TBody extends z.ZodTypeAny>(
 
   const router = Router();
 
+  // Hard-delete resources carry a `deletedAt` tombstone column. On DELETE we
+  // stamp it (instead of removing the row) so the record stays visible in list
+  // responses and clients can evict it from their local mirror — this is how
+  // cross-device deletes propagate. Soft-delete resources use isActive instead
+  // and have no deletedAt column, so all deletedAt handling is gated on this.
+  const isHardDelete = deleteStyle === "hard";
+
   // ── GET / — list ──────────────────────────────────────────────────────────
 
   router.get(
@@ -178,9 +185,12 @@ export function createCrudRouter<TBody extends z.ZodTypeAny>(
         throw AppError.badRequest(`Invalid ${idParam}`, parsed.error.issues);
       }
 
-      const item = await delegate.findFirst({
-        where: { [idParam]: parsed.data, userId: req.userId },
-      });
+      // Single GET hides tombstoned rows (returns 404) even though list surfaces
+      // them — a deleted resource should read as gone to a direct fetch.
+      const where: Record<string, unknown> = { [idParam]: parsed.data, userId: req.userId };
+      if (isHardDelete) where.deletedAt = null;
+
+      const item = await delegate.findFirst({ where });
 
       if (!item) throw AppError.notFound(resourceName);
 
@@ -226,7 +236,10 @@ export function createCrudRouter<TBody extends z.ZodTypeAny>(
       const { createdAt: bodyCreatedAt, updatedAt: _updatedAt, userId: _userId, ...updateData } = rawData;
 
       // userId is always authoritative from the token — never from body.
-      const ownedUpdateData = { ...updateData, userId: req.userId };
+      // For hard-delete resources, clear any tombstone so a client re-PUT of a
+      // previously-deleted id revives the row (offline-first resurrection).
+      const ownedUpdateData: Record<string, unknown> = { ...updateData, userId: req.userId };
+      if (isHardDelete) ownedUpdateData.deletedAt = null;
 
       // Step 1: ownership check
       const existing = await delegate.findFirst({
@@ -279,10 +292,13 @@ export function createCrudRouter<TBody extends z.ZodTypeAny>(
         });
         if (!existing) throw AppError.notFound(resourceName);
 
-        // Defense-in-depth: include userId in the delete where clause so that
-        // even if the pre-check result is stale, the DB op cannot touch another
-        // user's row.
-        await delegate.delete({ where: { [idParam]: parsed.data, userId: req.userId } });
+        // Tombstone instead of hard-removing: set deletedAt so the row remains
+        // in list responses for cross-device eviction. Defense-in-depth: userId
+        // in the where clause so a stale pre-check cannot touch another user's row.
+        await delegate.update({
+          where: { [idParam]: parsed.data, userId: req.userId },
+          data: { deletedAt: new Date() },
+        });
 
         sendSuccess(res, { deleted: true });
       }),

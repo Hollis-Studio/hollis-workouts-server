@@ -193,6 +193,18 @@ describe("GET /v1/cardio-baselines/:canonicalExerciseId", () => {
     expect(res.status).toBe(404);
     expect(res.body.err.code).toBe("NOT_FOUND");
   });
+
+  it("returns 404 when the baseline is tombstoned (single GET hides deleted rows)", async () => {
+    prismaMock.cardioBaseline.findUnique.mockResolvedValue({
+      ...baselineFixture,
+      deletedAt: new Date(),
+    });
+
+    const res = await auth.get(`/v1/cardio-baselines/${EXERCISE_ID}`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.err.code).toBe("NOT_FOUND");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -314,29 +326,30 @@ describe("DELETE /v1/cardio-baselines/:canonicalExerciseId", () => {
     });
   });
 
-  it("calls delete with the composite key after the ownership check", async () => {
+  it("tombstones via update with the composite key after the ownership check", async () => {
     prismaMock.cardioBaseline.findUnique.mockResolvedValue(baselineFixture);
-    prismaMock.cardioBaseline.delete.mockResolvedValue(baselineFixture);
+    prismaMock.cardioBaseline.update.mockResolvedValue(baselineFixture);
 
     await auth.delete(`/v1/cardio-baselines/${EXERCISE_ID}`);
 
-    expect(prismaMock.cardioBaseline.delete).toHaveBeenCalledOnce();
-    const [deleteArgs] = prismaMock.cardioBaseline.delete.mock.calls[0];
-    expect(deleteArgs.where).toEqual({
+    expect(prismaMock.cardioBaseline.update).toHaveBeenCalledOnce();
+    const [updateArgs] = prismaMock.cardioBaseline.update.mock.calls[0];
+    expect(updateArgs.where).toEqual({
       userId_canonicalExerciseId: {
         userId: TEST_USER_ID,
         canonicalExerciseId: EXERCISE_ID,
       },
     });
+    expect(updateArgs.data.deletedAt).toBeInstanceOf(Date);
   });
 
-  it("returns 404 and does NOT call delete when the record is absent", async () => {
+  it("returns 404 and does NOT tombstone when the record is absent", async () => {
     prismaMock.cardioBaseline.findUnique.mockResolvedValue(null);
 
     const res = await auth.delete(`/v1/cardio-baselines/${EXERCISE_ID}`);
 
     expect(res.status).toBe(404);
     expect(res.body.err.code).toBe("NOT_FOUND");
-    expect(prismaMock.cardioBaseline.delete).not.toHaveBeenCalled();
+    expect(prismaMock.cardioBaseline.update).not.toHaveBeenCalled();
   });
 });

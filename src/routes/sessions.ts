@@ -1,7 +1,7 @@
 /**
  * @ai-context Sessions resource router — CRUD for TrainingSessionLog records.
  *
- * DELETE style: hard (with cascade delete of metric-basket snapshots)
+ * DELETE style: tombstone (sets deletedAt; cascades to metric-basket snapshots)
  * Wired by: src/routes/index.ts at /sessions
  *
  * Design notes:
@@ -163,7 +163,7 @@ router.get(
     }
 
     const session = await prisma.session.findFirst({
-      where: { id: idParsed.data, userId: req.userId },
+      where: { id: idParsed.data, userId: req.userId, deletedAt: null },
     });
     if (!session) throw AppError.notFound("Session");
 
@@ -231,6 +231,8 @@ router.put(
       programPhase: body.programPhase ?? null,
       skippedExerciseIds: body.skippedExerciseIds,
       exercises: exParsed.data,
+      // Clear any tombstone so a client re-PUT of a deleted session revives it.
+      deletedAt: null,
     };
 
     // IDOR guard: check ownership before deciding create vs update.
@@ -260,10 +262,10 @@ router.put(
   }),
 );
 
-// ── DELETE /:id — hard delete with cascade ─────────────────────────────────
+// ── DELETE /:id — tombstone delete with cascade ────────────────────────────
 //
-// Deletes all MetricBasketSnapshotRecord rows with sourceSessionId = id
-// for the same user in the same transaction, then deletes the session.
+// Stamps deletedAt on all MetricBasketSnapshotRecord rows with sourceSessionId
+// = id for the same user in the same transaction, then on the session itself.
 
 router.delete(
   "/:id",
@@ -285,15 +287,20 @@ router.delete(
     });
     if (!existing) throw AppError.notFound("Session");
 
-    // Cascade: delete metric-basket snapshots triggered by this session,
-    // then delete the session itself — atomically.
+    // Cascade tombstone: stamp deletedAt on the metric-basket snapshots this
+    // session triggered, then on the session itself — atomically. Soft-deleting
+    // (rather than removing) keeps both visible in list responses so other
+    // devices can evict them from their local mirror.
+    const now = new Date();
     await prisma.$transaction([
-      prisma.metricBasketSnapshotRecord.deleteMany({
+      prisma.metricBasketSnapshotRecord.updateMany({
         where: { userId, sourceSessionId: id },
+        data: { deletedAt: now },
       }),
       // userId in the where is defense-in-depth (see PUT update above).
-      prisma.session.delete({
+      prisma.session.update({
         where: { id, userId },
+        data: { deletedAt: now },
       }),
     ]);
 

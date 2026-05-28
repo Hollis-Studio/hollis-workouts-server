@@ -416,24 +416,25 @@ describe("DELETE /v1/metric-basket-snapshots/:id (hard delete)", () => {
     expect(findFirstArgs.where).toMatchObject({ id: SNAPSHOT_ID, userId: TEST_USER_ID });
   });
 
-  it("includes userId in the delete where clause (defense-in-depth)", async () => {
+  it("tombstones via update with userId in the where clause (defense-in-depth)", async () => {
     prismaMock.metricBasketSnapshotRecord.findFirst.mockResolvedValue(snapshotFixture);
-    prismaMock.metricBasketSnapshotRecord.delete.mockResolvedValue(snapshotFixture);
+    prismaMock.metricBasketSnapshotRecord.update.mockResolvedValue(snapshotFixture);
 
     await auth.delete(`/v1/metric-basket-snapshots/${SNAPSHOT_ID}`);
 
-    const [deleteArgs] = prismaMock.metricBasketSnapshotRecord.delete.mock.calls[0];
-    expect(deleteArgs.where).toMatchObject({ id: SNAPSHOT_ID, userId: TEST_USER_ID });
+    const [updateArgs] = prismaMock.metricBasketSnapshotRecord.update.mock.calls[0];
+    expect(updateArgs.where).toMatchObject({ id: SNAPSHOT_ID, userId: TEST_USER_ID });
+    expect(updateArgs.data.deletedAt).toBeInstanceOf(Date);
   });
 
-  it("returns 404 and does NOT call delete when the snapshot is absent", async () => {
+  it("returns 404 and does NOT tombstone when the snapshot is absent", async () => {
     prismaMock.metricBasketSnapshotRecord.findFirst.mockResolvedValue(null);
 
     const res = await auth.delete(`/v1/metric-basket-snapshots/${SNAPSHOT_ID}`);
 
     expect(res.status).toBe(404);
     expect(res.body.err.code).toBe("NOT_FOUND");
-    expect(prismaMock.metricBasketSnapshotRecord.delete).not.toHaveBeenCalled();
+    expect(prismaMock.metricBasketSnapshotRecord.update).not.toHaveBeenCalled();
   });
 });
 

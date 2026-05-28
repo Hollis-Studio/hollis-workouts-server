@@ -237,22 +237,23 @@ describe("DELETE /v1/plateau-coaching/:id", () => {
     expect(res.body.data.deleted).toBe(true);
   });
 
-  it("IDOR: delete where clause includes userId from token", async () => {
+  it("IDOR: tombstone update where clause includes userId from token", async () => {
     prismaMock.plateauCoachingArtifact.findFirst.mockResolvedValue(artifactFixture);
-    prismaMock.plateauCoachingArtifact.delete.mockResolvedValue(artifactFixture);
+    prismaMock.plateauCoachingArtifact.update.mockResolvedValue(artifactFixture);
 
     await auth.delete(`/v1/plateau-coaching/${ARTIFACT_ID}`);
 
-    const [deleteArgs] = prismaMock.plateauCoachingArtifact.delete.mock.calls[0];
-    expect(deleteArgs.where).toMatchObject({ id: ARTIFACT_ID, userId: TEST_USER_ID });
+    const [updateArgs] = prismaMock.plateauCoachingArtifact.update.mock.calls[0];
+    expect(updateArgs.where).toMatchObject({ id: ARTIFACT_ID, userId: TEST_USER_ID });
+    expect(updateArgs.data.deletedAt).toBeInstanceOf(Date);
   });
 
-  it("returns 404 and does NOT call delete when absent", async () => {
+  it("returns 404 and does NOT tombstone when absent", async () => {
     prismaMock.plateauCoachingArtifact.findFirst.mockResolvedValue(null);
 
     const res = await auth.delete(`/v1/plateau-coaching/${ARTIFACT_ID}`);
 
     expect(res.status).toBe(404);
-    expect(prismaMock.plateauCoachingArtifact.delete).not.toHaveBeenCalled();
+    expect(prismaMock.plateauCoachingArtifact.update).not.toHaveBeenCalled();
   });
 });

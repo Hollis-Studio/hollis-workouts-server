@@ -77,6 +77,9 @@ model Program {
   schemaVersion     Int?
   createdAt         DateTime
   updatedAt         DateTime  @updatedAt
+  /// Soft-delete tombstone. When set, the row is returned in list responses so
+  /// clients can evict it from their local mirror, but is hidden from single GET.
+  deletedAt         DateTime?
 
   @@index([userId])
   @@index([userId, isActive])
@@ -116,6 +119,8 @@ model Session {
   skippedExerciseIds String[]
   /// SessionExercise[] — includes sets[], cardioData, stretchData; stored as Json
   exercises          Json
+  /// Soft-delete tombstone — see Program.deletedAt.
+  deletedAt          DateTime?
 
   @@index([userId])
   @@index([userId, completedAt])
@@ -164,6 +169,8 @@ model ProgressionBaseline {
   schemaVersion                 Int?
   createdAt                     DateTime
   updatedAt                     DateTime  @updatedAt
+  /// Soft-delete tombstone — see Program.deletedAt.
+  deletedAt                     DateTime?
 
   @@id([userId, canonicalExerciseId])
   @@index([userId])
@@ -204,6 +211,8 @@ model CardioBaseline {
   history              Json
   createdAt            DateTime
   updatedAt            DateTime @updatedAt
+  /// Soft-delete tombstone — see Program.deletedAt.
+  deletedAt            DateTime?
 
   @@id([userId, canonicalExerciseId])
   @@index([userId])
@@ -234,6 +243,8 @@ model GymExerciseInstance {
   lastUsedWeightKg    Float?
   createdAt           DateTime
   updatedAt           DateTime @updatedAt
+  /// Soft-delete tombstone — see Program.deletedAt.
+  deletedAt           DateTime?
 
   @@index([userId])
   @@index([userId, gymProfileId])
@@ -315,6 +326,8 @@ model ExerciseAlias {
   source              String
   createdAt           DateTime
   updatedAt           DateTime @updatedAt
+  /// Soft-delete tombstone — see Program.deletedAt.
+  deletedAt           DateTime?
 
   @@index([userId])
   @@index([userId, canonicalExerciseId])
@@ -469,6 +482,8 @@ model MetricBasketSnapshotRecord {
   /// SERVER-MANAGED — not sent by the client; stripped by the app's Zod on read.
   /// Kept intentionally for sync ordering and audit purposes.
   createdAt       DateTime
+  /// Soft-delete tombstone — see Program.deletedAt.
+  deletedAt       DateTime?
 
   @@index([userId])
   @@index([userId, exerciseId])
@@ -533,6 +548,8 @@ model PlateauCoachingArtifact {
   tokenCount   Json?
   createdAt    DateTime
   updatedAt    DateTime  @updatedAt
+  /// Soft-delete tombstone — see Program.deletedAt.
+  deletedAt    DateTime?
 
   @@index([userId])
   @@index([userId, exerciseId])

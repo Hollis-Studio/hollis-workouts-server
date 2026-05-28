@@ -59,6 +59,7 @@ function makeModelMock() {
     create: vi.fn(),
     delete: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
     deleteMany: vi.fn(),
   };
 }

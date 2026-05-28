@@ -6,7 +6,7 @@
  * operations use the compound Prisma where clause
  * `{ userId_canonicalExerciseId: { userId, canonicalExerciseId } }`.
  *
- * DELETE style: hard
+ * DELETE style: tombstone (sets deletedAt)
  * Wired by: src/routes/index.ts at /progression-baselines
  *
  * deps: lib/prisma, lib/AppError, middleware/errorHandler, middleware/rateLimit,
@@ -97,7 +97,8 @@ progressionBaselinesRouter.get(
       },
     });
 
-    if (!item) throw AppError.notFound("ProgressionBaseline");
+    // Single GET hides tombstoned rows (list still surfaces them for eviction).
+    if (!item || item.deletedAt) throw AppError.notFound("ProgressionBaseline");
 
     sendSuccess(res, item);
   }),
@@ -148,6 +149,8 @@ progressionBaselinesRouter.put(
       },
       update: {
         ...data,
+        // Clear any tombstone so a re-PUT revives a previously-deleted baseline.
+        deletedAt: null,
       },
     });
 
@@ -156,7 +159,7 @@ progressionBaselinesRouter.put(
   }),
 );
 
-// ── DELETE /:canonicalExerciseId — hard delete by composite key ────────────
+// ── DELETE /:canonicalExerciseId — tombstone delete by composite key ───────
 
 progressionBaselinesRouter.delete(
   "/:canonicalExerciseId",
@@ -184,13 +187,16 @@ progressionBaselinesRouter.delete(
     });
     if (!existing) throw AppError.notFound("ProgressionBaseline");
 
-    await prisma.progressionBaseline.delete({
+    // Tombstone instead of hard-removing so the deletion propagates to other
+    // devices via the list response (clients evict rows carrying deletedAt).
+    await prisma.progressionBaseline.update({
       where: {
         userId_canonicalExerciseId: {
           userId,
           canonicalExerciseId: exerciseId,
         },
       },
+      data: { deletedAt: new Date() },
     });
 
     sendSuccess(res, { deleted: true });

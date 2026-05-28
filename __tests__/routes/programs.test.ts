@@ -212,6 +212,19 @@ describe("GET /v1/programs/:id", () => {
     expect(findFirstArgs.where).toMatchObject({ id: PROGRAM_ID, userId: TEST_USER_ID });
   });
 
+  it("hides tombstoned rows — findFirst where includes deletedAt: null", async () => {
+    prismaMock.program.findFirst.mockResolvedValue(programFixture);
+
+    await auth.get(`/v1/programs/${PROGRAM_ID}`);
+
+    const [findFirstArgs] = prismaMock.program.findFirst.mock.calls[0];
+    expect(findFirstArgs.where).toMatchObject({
+      id: PROGRAM_ID,
+      userId: TEST_USER_ID,
+      deletedAt: null,
+    });
+  });
+
   it("returns 404 when the program does not exist (or belongs to another user)", async () => {
     prismaMock.program.findFirst.mockResolvedValue(null);
 
@@ -255,6 +268,16 @@ describe("PUT /v1/programs/:id", () => {
     expect(res.body.data.name).toBe("Renamed Block");
     expect(prismaMock.program.update).toHaveBeenCalledOnce();
     expect(prismaMock.program.create).not.toHaveBeenCalled();
+  });
+
+  it("resurrects a tombstoned row — update clears deletedAt on the UPDATE path", async () => {
+    prismaMock.program.findFirst.mockResolvedValue(programFixture);
+    prismaMock.program.update.mockResolvedValue(programFixture);
+
+    await auth.put(`/v1/programs/${PROGRAM_ID}`).send(validProgramBody);
+
+    const [updateArgs] = prismaMock.program.update.mock.calls[0];
+    expect(updateArgs.data.deletedAt).toBeNull();
   });
 
   it("IDOR — step 1 uses { id, userId } so another user's row is never overwritten", async () => {
@@ -393,23 +416,26 @@ describe("DELETE /v1/programs/:id", () => {
     expect(findFirstArgs.where).toMatchObject({ id: PROGRAM_ID, userId: TEST_USER_ID });
   });
 
-  it("calls program.delete after successful ownership check", async () => {
+  it("tombstones the program (update sets deletedAt) after successful ownership check", async () => {
     prismaMock.program.findFirst.mockResolvedValue(programFixture);
-    prismaMock.program.delete.mockResolvedValue(programFixture);
+    prismaMock.program.update.mockResolvedValue(programFixture);
 
     await auth.delete(`/v1/programs/${PROGRAM_ID}`);
 
-    expect(prismaMock.program.delete).toHaveBeenCalledOnce();
+    expect(prismaMock.program.update).toHaveBeenCalledOnce();
+    const [updateArgs] = prismaMock.program.update.mock.calls[0];
+    expect(updateArgs.where).toMatchObject({ id: PROGRAM_ID, userId: TEST_USER_ID });
+    expect(updateArgs.data.deletedAt).toBeInstanceOf(Date);
   });
 
-  it("returns 404 and does NOT call delete when the program is absent (or foreign-owned)", async () => {
+  it("returns 404 and does NOT tombstone when the program is absent (or foreign-owned)", async () => {
     prismaMock.program.findFirst.mockResolvedValue(null);
 
     const res = await auth.delete(`/v1/programs/${PROGRAM_ID}`);
 
     expect(res.status).toBe(404);
     expect(res.body.err.code).toBe("NOT_FOUND");
-    expect(prismaMock.program.delete).not.toHaveBeenCalled();
+    expect(prismaMock.program.update).not.toHaveBeenCalled();
   });
 
   it("does NOT expose a PATCH route (hard-delete resources have no soft-delete endpoint)", async () => {

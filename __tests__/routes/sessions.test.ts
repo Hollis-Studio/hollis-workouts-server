@@ -397,9 +397,9 @@ describe("PUT /v1/sessions/:id", () => {
 describe("DELETE /v1/sessions/:id (cascade)", () => {
   it("returns 200 and { deleted: true } when the session is owned", async () => {
     prismaMock.session.findFirst.mockResolvedValue(sessionFixture);
-    // deleteMany and session.delete are called as eager args to $transaction([...])
-    prismaMock.metricBasketSnapshotRecord.deleteMany.mockResolvedValue({ count: 0 });
-    prismaMock.session.delete.mockResolvedValue(sessionFixture);
+    // updateMany and session.update are called as eager args to $transaction([...])
+    prismaMock.metricBasketSnapshotRecord.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.session.update.mockResolvedValue(sessionFixture);
     prismaMock.$transaction.mockResolvedValue([{ count: 0 }, sessionFixture]);
 
     const res = await auth.delete(`/v1/sessions/${SESSION_ID}`);
@@ -411,8 +411,8 @@ describe("DELETE /v1/sessions/:id (cascade)", () => {
 
   it("checks ownership first — findFirst scoped to { id, userId } before the transaction", async () => {
     prismaMock.session.findFirst.mockResolvedValue(sessionFixture);
-    prismaMock.metricBasketSnapshotRecord.deleteMany.mockResolvedValue({ count: 0 });
-    prismaMock.session.delete.mockResolvedValue(sessionFixture);
+    prismaMock.metricBasketSnapshotRecord.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.session.update.mockResolvedValue(sessionFixture);
     prismaMock.$transaction.mockResolvedValue([{ count: 0 }, sessionFixture]);
 
     await auth.delete(`/v1/sessions/${SESSION_ID}`);
@@ -421,10 +421,10 @@ describe("DELETE /v1/sessions/:id (cascade)", () => {
     expect(findFirstArgs.where).toMatchObject({ id: SESSION_ID, userId: TEST_USER_ID });
   });
 
-  it("calls prisma.$transaction for atomic cascade delete", async () => {
+  it("calls prisma.$transaction for atomic cascade tombstone", async () => {
     prismaMock.session.findFirst.mockResolvedValue(sessionFixture);
-    prismaMock.metricBasketSnapshotRecord.deleteMany.mockResolvedValue({ count: 0 });
-    prismaMock.session.delete.mockResolvedValue(sessionFixture);
+    prismaMock.metricBasketSnapshotRecord.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.session.update.mockResolvedValue(sessionFixture);
     prismaMock.$transaction.mockResolvedValue([{ count: 0 }, sessionFixture]);
 
     await auth.delete(`/v1/sessions/${SESSION_ID}`);
@@ -432,34 +432,36 @@ describe("DELETE /v1/sessions/:id (cascade)", () => {
     expect(prismaMock.$transaction).toHaveBeenCalledOnce();
   });
 
-  it("CASCADE — deletes metric-basket snapshots with { userId, sourceSessionId: id } before deleting session", async () => {
+  it("CASCADE — tombstones metric-basket snapshots with { userId, sourceSessionId: id }", async () => {
     prismaMock.session.findFirst.mockResolvedValue(sessionFixture);
-    prismaMock.metricBasketSnapshotRecord.deleteMany.mockResolvedValue({ count: 2 });
-    prismaMock.session.delete.mockResolvedValue(sessionFixture);
+    prismaMock.metricBasketSnapshotRecord.updateMany.mockResolvedValue({ count: 2 });
+    prismaMock.session.update.mockResolvedValue(sessionFixture);
     prismaMock.$transaction.mockResolvedValue([{ count: 2 }, sessionFixture]);
 
     await auth.delete(`/v1/sessions/${SESSION_ID}`);
 
-    // deleteMany is called eagerly when building the $transaction array
-    expect(prismaMock.metricBasketSnapshotRecord.deleteMany).toHaveBeenCalledOnce();
-    const [deleteManyArgs] = prismaMock.metricBasketSnapshotRecord.deleteMany.mock.calls[0];
-    expect(deleteManyArgs.where).toMatchObject({
+    // updateMany is called eagerly when building the $transaction array
+    expect(prismaMock.metricBasketSnapshotRecord.updateMany).toHaveBeenCalledOnce();
+    const [updateManyArgs] = prismaMock.metricBasketSnapshotRecord.updateMany.mock.calls[0];
+    expect(updateManyArgs.where).toMatchObject({
       userId: TEST_USER_ID,
       sourceSessionId: SESSION_ID,
     });
+    expect(updateManyArgs.data.deletedAt).toBeInstanceOf(Date);
   });
 
-  it("CASCADE — session.delete is called as part of the transaction", async () => {
+  it("CASCADE — session.update tombstones the session as part of the transaction", async () => {
     prismaMock.session.findFirst.mockResolvedValue(sessionFixture);
-    prismaMock.metricBasketSnapshotRecord.deleteMany.mockResolvedValue({ count: 0 });
-    prismaMock.session.delete.mockResolvedValue(sessionFixture);
+    prismaMock.metricBasketSnapshotRecord.updateMany.mockResolvedValue({ count: 0 });
+    prismaMock.session.update.mockResolvedValue(sessionFixture);
     prismaMock.$transaction.mockResolvedValue([{ count: 0 }, sessionFixture]);
 
     await auth.delete(`/v1/sessions/${SESSION_ID}`);
 
-    expect(prismaMock.session.delete).toHaveBeenCalledOnce();
-    const [deleteArgs] = prismaMock.session.delete.mock.calls[0];
-    expect(deleteArgs.where).toMatchObject({ id: SESSION_ID });
+    expect(prismaMock.session.update).toHaveBeenCalledOnce();
+    const [updateArgs] = prismaMock.session.update.mock.calls[0];
+    expect(updateArgs.where).toMatchObject({ id: SESSION_ID });
+    expect(updateArgs.data.deletedAt).toBeInstanceOf(Date);
   });
 
   it("returns 404 and does NOT call $transaction when session is absent (or foreign-owned)", async () => {
@@ -470,7 +472,7 @@ describe("DELETE /v1/sessions/:id (cascade)", () => {
     expect(res.status).toBe(404);
     expect(res.body.err.code).toBe("NOT_FOUND");
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
-    expect(prismaMock.metricBasketSnapshotRecord.deleteMany).not.toHaveBeenCalled();
-    expect(prismaMock.session.delete).not.toHaveBeenCalled();
+    expect(prismaMock.metricBasketSnapshotRecord.updateMany).not.toHaveBeenCalled();
+    expect(prismaMock.session.update).not.toHaveBeenCalled();
   });
 });

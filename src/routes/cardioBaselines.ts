@@ -12,7 +12,7 @@
  * bestMETs explicitly — satisfying the app-schema requirement that the key be
  * present (never omitted).
  *
- * DELETE style: hard
+ * DELETE style: tombstone (sets deletedAt)
  * Wired by: src/routes/index.ts at /cardio-baselines
  *
  * deps: lib/prisma, lib/AppError, middleware/errorHandler, middleware/rateLimit,
@@ -107,7 +107,8 @@ cardioBaselinesRouter.get(
       },
     });
 
-    if (!item) throw AppError.notFound("CardioBaseline");
+    // Single GET hides tombstoned rows (list still surfaces them for eviction).
+    if (!item || item.deletedAt) throw AppError.notFound("CardioBaseline");
 
     sendSuccess(res, item);
   }),
@@ -159,6 +160,8 @@ cardioBaselinesRouter.put(
       },
       update: {
         ...data,
+        // Clear any tombstone so a re-PUT revives a previously-deleted baseline.
+        deletedAt: null,
       },
     });
 
@@ -167,7 +170,7 @@ cardioBaselinesRouter.put(
   }),
 );
 
-// ── DELETE /:canonicalExerciseId — hard delete by composite key ────────────
+// ── DELETE /:canonicalExerciseId — tombstone delete by composite key ───────
 
 cardioBaselinesRouter.delete(
   "/:canonicalExerciseId",
@@ -195,13 +198,16 @@ cardioBaselinesRouter.delete(
     });
     if (!existing) throw AppError.notFound("CardioBaseline");
 
-    await prisma.cardioBaseline.delete({
+    // Tombstone instead of hard-removing so the deletion propagates to other
+    // devices via the list response (clients evict rows carrying deletedAt).
+    await prisma.cardioBaseline.update({
       where: {
         userId_canonicalExerciseId: {
           userId,
           canonicalExerciseId: exerciseId,
         },
       },
+      data: { deletedAt: new Date() },
     });
 
     sendSuccess(res, { deleted: true });
