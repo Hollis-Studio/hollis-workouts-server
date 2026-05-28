@@ -1,21 +1,23 @@
 # Infrastructure — Hollis Workouts Server
 
-> **Status:** Terraform IaC is written and validated. Resources are not yet applied to prod.
-> See the [Apply Runbook](#apply-runbook) below before running `terraform apply`.
+> **Status:** Production resources are applied and serving traffic.
+> Verified 2026-05-27 via the `hollis-dev` AWS profile: ECS service
+> `hollis-workouts-server` has 2/2 healthy tasks, the ALB target group is
+> healthy, and `https://workouts-api.hollis.health/readyz` reports DB connected.
 
 ---
 
 ## Stack Overview
 
-| Layer | Technology |
-|---|---|
-| Runtime | AWS ECS Fargate, us-east-1 |
-| Container registry | Amazon ECR (`hollis-workouts-server`) |
-| Load balancing | Shared ALB (`hollis-prod-alb`) — additive listener rule only |
-| Secrets | AWS Secrets Manager (`hollis-prod/workouts/*`) |
-| Logs | CloudWatch Logs (`/ecs/hollis-workouts-server`, 90-day retention) |
-| Database | Shared RDS Postgres (`hollis-prod-postgres`) — additive SG rule only |
-| IaC | Terraform ≥ 1.5.7, AWS provider `~> 5.0` |
+| Layer              | Technology                                                           |
+| ------------------ | -------------------------------------------------------------------- |
+| Runtime            | AWS ECS Fargate, us-east-1                                           |
+| Container registry | Amazon ECR (`hollis-workouts-server`)                                |
+| Load balancing     | Shared ALB (`hollis-prod-alb`) — additive listener rule only         |
+| Secrets            | AWS Secrets Manager (`hollis-prod/workouts/*`)                       |
+| Logs               | CloudWatch Logs (`/ecs/hollis-workouts-server`, 90-day retention)    |
+| Database           | Shared RDS Postgres (`hollis-prod-postgres`) — additive SG rule only |
+| IaC                | Terraform ≥ 1.5.7, AWS provider `~> 5.0`                             |
 
 ---
 
@@ -36,15 +38,15 @@ Everything else (ECR repo, ECS service, task definition, IAM roles, security gro
 
 ## Terraform Files
 
-| File | Purpose |
-|---|---|
-| `versions.tf` | Provider pin (AWS `~> 5.0`), Terraform version floor (`>= 1.5.7`) |
-| `variables.tf` | All input variables with descriptions, types, defaults, and sensitivity flags |
-| `main.tf` | ECR repo, CloudWatch log group, all Secrets Manager secrets + placeholder versions |
-| `network.tf` | VPC data source, ECS security group, additive RDS SG rule |
-| `database.tf` | RDS data source; opt-in dedicated RDS instance (`create_dedicated_db = true`) |
-| `ecs.tf` | IAM execution/task roles, ALB target group, ALB listener rule, ECS task definition, ECS service |
-| `outputs.tf` | ECR URL, TG ARN, service name, secret ARNs (sensitive), ALB rule ARN |
+| File           | Purpose                                                                                         |
+| -------------- | ----------------------------------------------------------------------------------------------- |
+| `versions.tf`  | Provider pin (AWS `~> 5.0`), Terraform version floor (`>= 1.5.7`)                               |
+| `variables.tf` | All input variables with descriptions, types, defaults, and sensitivity flags                   |
+| `main.tf`      | ECR repo, CloudWatch log group, all Secrets Manager secrets + placeholder versions              |
+| `network.tf`   | VPC data source, ECS security group, additive RDS SG rule                                       |
+| `database.tf`  | RDS data source; opt-in dedicated RDS instance (`create_dedicated_db = true`)                   |
+| `ecs.tf`       | IAM execution/task roles, ALB target group, ALB listener rule, ECS task definition, ECS service |
+| `outputs.tf`   | ECR URL, TG ARN, service name, secret ARNs (sensitive), ALB rule ARN                            |
 
 ---
 
@@ -52,35 +54,35 @@ Everything else (ECR repo, ECS service, task definition, IAM roles, security gro
 
 ### Required (no default — must be supplied at apply time)
 
-| Variable | Description |
-|---|---|
-| `certificate_arn` | ACM certificate ARN for `workouts-api.hollis.health`. Confirm the existing `*.hollis.health` wildcard cert covers this domain, or issue a new cert. |
-| `private_subnet_ids` | List of private subnet IDs in `vpc-0abe755c07479d64a` for ECS task placement. Run: `aws ec2 describe-subnets --filters Name=vpc-id,Values=vpc-0abe755c07479d64a Name=tag:Tier,Values=private` |
-| `identity_jwt_secret` | **MUST be the SAME value Hollis Identity signs HS256 tokens with.** Sensitive. Pass via `TF_VAR_identity_jwt_secret` or a gitignored `.tfvars` file. Min 32 characters. |
+| Variable              | Description                                                                                                                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `certificate_arn`     | ACM certificate ARN for `workouts-api.hollis.health`. Confirm the existing `*.hollis.health` wildcard cert covers this domain, or issue a new cert.                                           |
+| `private_subnet_ids`  | List of private subnet IDs in `vpc-0abe755c07479d64a` for ECS task placement. Run: `aws ec2 describe-subnets --filters Name=vpc-id,Values=vpc-0abe755c07479d64a Name=tag:Tier,Values=private` |
+| `identity_jwt_secret` | **MUST be the SAME value Hollis Identity signs HS256 tokens with.** Sensitive. Pass via `TF_VAR_identity_jwt_secret` or a gitignored `.tfvars` file. Min 32 characters.                       |
 
 ### Secret values set out-of-band (Terraform creates the secret resource; values set via console or AWS CLI before first deploy)
 
-| Secret path | Env var | Notes |
-|---|---|---|
-| `hollis-prod/workouts/database-url` | `DATABASE_URL` | `postgresql://<user>:<pass>@<rds-host>:5432/hollis_workouts?sslmode=require&connection_limit=20` — create the `hollis_workouts` DB and user on `hollis-prod-postgres` first |
-| `hollis-prod/workouts/database-ssl-ca` | `DATABASE_SSL_CA` | PEM contents of the RDS global CA bundle. Download from `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem` |
+| Secret path                                                | Env var                               | Notes                                                                                                                                                                                                     |
+| ---------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hollis-prod/workouts/database-url`                        | `DATABASE_URL`                        | `postgresql://<user>:<pass>@<rds-host>:5432/hollis_workouts?sslmode=require&connection_limit=20` — create the `hollis_workouts` DB and user on `hollis-prod-postgres` first                               |
+| `hollis-prod/workouts/database-ssl-ca`                     | `DATABASE_SSL_CA`                     | PEM contents of the RDS global CA bundle. Download from `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem`                                                                               |
 | `hollis-prod/workouts/google-application-credentials-json` | `GOOGLE_APPLICATION_CREDENTIALS_JSON` | Full contents of the GCP service-account key JSON file. The SA needs `roles/aiplatform.user`. `ops/entrypoint.sh` writes this to `/tmp/gcp-sa.json` and exports `GOOGLE_APPLICATION_CREDENTIALS` on boot. |
-| `hollis-prod/workouts/sentry-dsn` | `SENTRY_DSN` | Sentry DSN (`https://...@....ingest.sentry.io/...`). Optional — Sentry is a no-op when absent. |
-| `hollis-prod/workouts/revenuecat-rest-api-key` | `REVENUECAT_REST_API_KEY` | RevenueCat secret API key (`sk_...`). Optional — entitlement check is bypassed when absent. |
-| `hollis-prod/workouts/google-cloud-project` | `GOOGLE_CLOUD_PROJECT` | GCP project ID (e.g. `hollis-prod`). Optional — AI routes return a clear error at runtime when absent. |
+| `hollis-prod/workouts/sentry-dsn`                          | `SENTRY_DSN`                          | Sentry DSN (`https://...@....ingest.sentry.io/...`). Optional — Sentry is a no-op when absent.                                                                                                            |
+| `hollis-prod/workouts/revenuecat-rest-api-key`             | `REVENUECAT_REST_API_KEY`             | RevenueCat secret API key (`sk_...`). Optional — entitlement check is bypassed when absent.                                                                                                               |
+| `hollis-prod/workouts/google-cloud-project`                | `GOOGLE_CLOUD_PROJECT`                | GCP project ID (e.g. `hollis-prod`). Optional — AI routes return a clear error at runtime when absent.                                                                                                    |
 
 ### Optional overrides (have sensible defaults)
 
-| Variable | Default | Description |
-|---|---|---|
-| `google_cloud_location` | `global` | Vertex AI API location |
-| `gemini_flash_model` | `gemini-3.1-flash-lite` | Injected as `GEMINI_FLASH_MODEL` |
-| `gemini_pro_model` | `gemini-3.1-pro-preview` | Injected as `GEMINI_PRO_MODEL` |
-| `gemini_embedding_model` | `gemini-embedding-001` | Injected as `GEMINI_EMBEDDING_MODEL` |
-| `image_tag` | `latest` | ECR image tag deployed by ECS |
-| `desired_count` | `2` | Number of Fargate tasks |
-| `cpu` / `memory` | `256` / `512` | Fargate task sizing |
-| `log_level` | `info` | Container `LOG_LEVEL` |
+| Variable                 | Default                  | Description                          |
+| ------------------------ | ------------------------ | ------------------------------------ |
+| `google_cloud_location`  | `global`                 | Vertex AI API location               |
+| `gemini_flash_model`     | `gemini-3.1-flash-lite`  | Injected as `GEMINI_FLASH_MODEL`     |
+| `gemini_pro_model`       | `gemini-3.1-pro-preview` | Injected as `GEMINI_PRO_MODEL`       |
+| `gemini_embedding_model` | `gemini-embedding-001`   | Injected as `GEMINI_EMBEDDING_MODEL` |
+| `image_tag`              | `latest`                 | ECR image tag deployed by ECS        |
+| `desired_count`          | `2`                      | Number of Fargate tasks              |
+| `cpu` / `memory`         | `256` / `512`            | Fargate task sizing                  |
+| `log_level`              | `info`                   | Container `LOG_LEVEL`                |
 
 ---
 

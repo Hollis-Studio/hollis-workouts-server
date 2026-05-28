@@ -18,6 +18,11 @@ data "aws_lb_listener" "https" {
   port              = 443
 }
 
+resource "aws_lb_listener_certificate" "workouts_hosts" {
+  listener_arn    = data.aws_lb_listener.https.arn
+  certificate_arn = var.certificate_arn
+}
+
 # ---------------------------------------------------------------------------
 # IAM — dedicated execution and task roles (do NOT share with Health's roles)
 # ---------------------------------------------------------------------------
@@ -61,6 +66,7 @@ resource "aws_iam_role_policy" "task_execution_secrets" {
         aws_secretsmanager_secret.sentry_dsn.arn,
         aws_secretsmanager_secret.revenuecat_rest_api_key.arn,
         aws_secretsmanager_secret.google_cloud_project.arn,
+        aws_secretsmanager_secret.gemini_api_key.arn,
         aws_secretsmanager_secret.google_application_credentials_json.arn,
       ]
     }]
@@ -181,6 +187,7 @@ resource "aws_ecs_task_definition" "workouts" {
       # ops/entrypoint.sh writes the JSON to /tmp/gcp-sa.json and sets
       # GOOGLE_APPLICATION_CREDENTIALS so the SDK picks it up automatically.
       { name = "GOOGLE_CLOUD_PROJECT", valueFrom = aws_secretsmanager_secret.google_cloud_project.arn },
+      { name = "GEMINI_API_KEY", valueFrom = aws_secretsmanager_secret.gemini_api_key.arn },
       { name = "GOOGLE_APPLICATION_CREDENTIALS_JSON", valueFrom = aws_secretsmanager_secret.google_application_credentials_json.arn },
     ]
 

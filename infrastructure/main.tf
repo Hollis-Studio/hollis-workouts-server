@@ -140,6 +140,16 @@ resource "aws_secretsmanager_secret_version" "google_cloud_project" {
   secret_string = "PLACEHOLDER — set to the GCP project ID (e.g. hollis-prod)"
 }
 
+resource "aws_secretsmanager_secret" "gemini_api_key" {
+  name        = "hollis-prod/workouts/gemini-api-key"
+  description = "GEMINI_API_KEY fallback for Workouts Server AI routes."
+}
+
+resource "aws_secretsmanager_secret_version" "gemini_api_key" {
+  secret_id     = aws_secretsmanager_secret.gemini_api_key.id
+  secret_string = "PLACEHOLDER — set to a Google AI Studio Gemini API key"
+}
+
 resource "aws_secretsmanager_secret" "google_application_credentials_json" {
   name        = "hollis-prod/workouts/google-application-credentials-json"
   description = "GOOGLE_APPLICATION_CREDENTIALS_JSON — full service-account key JSON for Vertex AI ADC on Fargate. ops/entrypoint.sh writes this to /tmp/gcp-sa.json and sets GOOGLE_APPLICATION_CREDENTIALS."

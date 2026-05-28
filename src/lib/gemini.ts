@@ -1,11 +1,11 @@
 /**
  * @ai-context Lazily-initialized Vertex AI Gemini client for Workouts Server.
  *
- * Uses Application Default Credentials (ADC) via the @google/genai SDK with
- * vertexai: true. The client is NOT instantiated at module load — call
- * getGeminiClient() at the service call site. This allows the server to boot
- * without GCP credentials and return a graceful error at runtime rather than
- * crashing on startup.
+ * Uses GEMINI_API_KEY when present, otherwise Application Default Credentials
+ * (ADC) via the @google/genai SDK with vertexai: true. The client is NOT
+ * instantiated at module load — call getGeminiClient() at the service call site.
+ * This allows the server to boot without AI credentials and return a graceful
+ * error at runtime rather than crashing on startup.
  *
  * Model name helpers mirror functions/src/utils/gemini.ts so service ports
  * read identically.
@@ -26,12 +26,21 @@ let _client: GoogleGenAI | null = null;
 
 /**
  * Returns the lazily-initialized Vertex AI GoogleGenAI client.
- * Returns null when GOOGLE_CLOUD_PROJECT is not set, allowing the server to
- * boot without GCP credentials; service callers return err("INTERNAL_ERROR")
- * at call time.
+ * Returns null when neither GEMINI_API_KEY nor GOOGLE_CLOUD_PROJECT is set,
+ * allowing the server to boot without GCP credentials; service callers return
+ * err("INTERNAL_ERROR") at call time.
  */
 export function getGeminiClient(): GoogleGenAI | null {
   if (_client) return _client;
+
+  const apiKey = env.GEMINI_API_KEY?.trim();
+  if (apiKey) {
+    _client = new GoogleGenAI({
+      apiKey,
+      httpOptions: { timeout: GEMINI_HTTP_TIMEOUT_MS },
+    });
+    return _client;
+  }
 
   const project = env.GOOGLE_CLOUD_PROJECT;
   // Treat blank/whitespace-only values as unset so placeholder strings don't instantiate a broken client.

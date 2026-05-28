@@ -42,6 +42,7 @@ const envSchema = z.object({
   // AI (Vertex AI via ADC). Optional so the server boots without AI creds;
   // AI routes return a clear error at runtime when GOOGLE_CLOUD_PROJECT is unset.
   GOOGLE_CLOUD_PROJECT: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
   GOOGLE_CLOUD_LOCATION: z.string().default("global"),
   GEMINI_FLASH_MODEL: z.string().default("gemini-3.1-flash-lite"),
   GEMINI_PRO_MODEL: z.string().default("gemini-3.1-pro-preview"),
