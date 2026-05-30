@@ -29,12 +29,10 @@ WORKDIR /app
 # Prisma's query engine needs openssl on alpine.
 RUN apk add --no-cache openssl
 
-# node:20-alpine bundles npm 10.x, but package-lock.json is authored with npm 11
-# (peer deps like react/react-dom/@types/react are tracked differently between
-# the two majors). Upgrade npm so `npm ci` matches the committed lock — mirrors
-# the hollis-health-app server Dockerfile.
-RUN npm install -g npm@latest
-
+# The mounted npmrc carries `legacy-peer-deps=true` (a @hollis-studio dev dep,
+# @prisma/studio-core, declares react/react-dom as non-optional peers that the
+# server neither imports nor locks). Without it, strict `npm ci` fails as
+# out-of-sync. This mirrors the repo's local npm config.
 COPY package.json package-lock.json ./
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc npm ci
 

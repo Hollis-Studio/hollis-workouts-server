@@ -92,6 +92,7 @@ jobs:
           cat > /tmp/npmrc-ci <<EOF
           //npm.pkg.github.com/:_authToken=${{ secrets.NODE_AUTH_TOKEN }}
           @hollis-studio:registry=https://npm.pkg.github.com
+          legacy-peer-deps=true
           EOF
 
       - name: Build and push image
