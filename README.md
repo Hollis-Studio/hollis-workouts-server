@@ -1,3 +1,22 @@
+> # ⚠️ DEPRECATED — moved into the Hollis Workouts monorepo
+>
+> **This repository is archived and read-only.** As of **2026-05-30** the server
+> was merged (with full git history) into the Hollis Workouts monorepo and now
+> lives at:
+>
+> ### 👉 [`Hollis-Studio/Hollis-Workouts`](https://github.com/Hollis-Studio/Hollis-Workouts) → [`server/`](https://github.com/Hollis-Studio/Hollis-Workouts/tree/main/server)
+>
+> All future development, CI, and deploys happen there. The monorepo's
+> `server-ci.yml` / `server-deploy.yml` workflows build and ship the same ECS
+> Fargate service (`workouts-api.hollis.health`). The AWS OIDC deploy trust was
+> repointed to the monorepo, and this repo's CI/Deploy workflows are disabled,
+> so **no code here can be built or deployed.** Open issues and PRs against the
+> monorepo instead.
+>
+> _The content below is retained for historical reference only._
+
+---
+
 # Hollis Workouts Server
 
 REST API backend for the Hollis Workouts mobile app. Replaces Firebase Firestore as the data persistence layer. Built with Express 5 + Prisma 7 + Postgres, deployed on ECS Fargate.
