@@ -46,6 +46,7 @@ Everything else (ECR repo, ECS service, task definition, IAM roles, security gro
 | `network.tf`   | VPC data source, ECS security group, additive RDS SG rule                                       |
 | `database.tf`  | RDS data source; opt-in dedicated RDS instance (`create_dedicated_db = true`)                   |
 | `ecs.tf`       | IAM execution/task roles, ALB target group, ALB listener rule, ECS task definition, ECS service |
+| `github-actions-deploy.tf` | OIDC deploy role for the `Deploy` GitHub Actions workflow (ECR push + ECS roll only — no infra provisioning); outputs `github_actions_deploy_role_arn` |
 | `outputs.tf`   | ECR URL, TG ARN, service name, secret ARNs (sensitive), ALB rule ARN                            |
 
 ---
@@ -197,6 +198,45 @@ After the service is healthy, create a CNAME (or alias) record:
 ```
 workouts-api.hollis.health → hollis-prod-alb DNS name
 ```
+
+---
+
+## Continuous Deployment (GitHub Actions → ECS)
+
+`.github/workflows/deploy.yml` builds the image, pushes it to ECR, and rolls
+the ECS service on every push to `main` that touches `src/`, `prisma/`,
+`ops/`, the `Dockerfile`, or `package*.json` (and via manual
+`workflow_dispatch`). It authenticates with **GitHub OIDC** — no static AWS
+keys — by assuming the narrow `${name}-github-actions-deploy-role` defined in
+`github-actions-deploy.tf` (ECR push + ECS roll only; trust restricted to
+main-branch pushes of this repo). Migrations run on the container entrypoint
+(`ops/entrypoint.sh` → `prisma migrate deploy`), so the workflow has no
+separate migration step; a failed migration crashes the task, the ECS circuit
+breaker rolls back, and the workflow fails at `wait-for-service-stability`.
+
+### One-time setup
+
+```bash
+# 1. Create the deploy role (idempotent — references the existing OIDC provider).
+cd infrastructure
+terraform apply            # adds aws_iam_role.github_actions_deploy + policy
+
+# 2. Wire the role ARN into the repo as a secret.
+ARN=$(terraform output -raw github_actions_deploy_role_arn)
+gh secret set AWS_DEPLOY_APP_ROLE_ARN -R Hollis-Studio/hollis-workouts-server -b "$ARN"
+
+# 3. Ensure the GitHub Packages read token exists (used for the Docker build).
+gh secret set NODE_AUTH_TOKEN -R Hollis-Studio/hollis-workouts-server   # paste a packages:read PAT
+
+# 4. Create the `production` Environment and add a required reviewer so every
+#    prod deploy waits for one-click approval ("gated on main"):
+#    GitHub → repo Settings → Environments → New environment → "production"
+#    → Required reviewers → add yourself.
+```
+
+The deploy job targets `environment: production` and is guarded by
+`if: github.ref == 'refs/heads/main'`, so it can only ever run from `main` and
+only after the required reviewer approves.
 
 ---
 

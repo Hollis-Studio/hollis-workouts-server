@@ -30,9 +30,115 @@ import {
 import { recordTokenUsage } from "./tokenUsage.js";
 import { logger } from "../../lib/logger.js";
 
-// ── Response schema (mirrors functions/src/schemas/ai/workoutVoice.ts) ─────────
+// ── Per-operation Zod schemas (V2 operations[] shape) ─────────────────────────
 
-const VoiceWorkoutLogSetSchema = z.object({
+// Flat set shape used inside add_exercise.sets
+const VoiceOpSetSchema = z.object({
+  weightKg: z.number().min(0).max(1000).optional(),
+  reps: z.number().int().min(0).max(200).optional(),
+  rir: z.number().int().min(0).max(10).optional(),
+  durationSeconds: z.number().int().min(1).max(3600).optional(),
+  distanceKm: z.number().min(0).max(1000).optional(),
+});
+
+// Flat "raw" operation shape as Gemini emits it (no discriminated union yet)
+const VoiceLogOperationRawSchema = z.object({
+  op: z.enum([
+    "log_set",
+    "modify_set",
+    "delete_set",
+    "skip_set",
+    "set_rest",
+    "set_active_exercise",
+    "add_exercise",
+  ]),
+  exerciseIndex: z.number().int().min(0).optional(),
+  setIndex: z.number().int().min(0).optional(),
+  weightKg: z.number().min(0).max(1000).optional(),
+  reps: z.number().int().min(0).max(200).optional(),
+  rir: z.number().int().min(0).max(10).optional(),
+  durationSeconds: z.number().int().min(1).max(3600).optional(),
+  distanceKm: z.number().min(0).max(1000).optional(),
+  restAfterSec: z.number().int().min(0).max(3600).nullable().optional(),
+  exerciseName: z.string().min(1).optional(),
+  trackingMode: z.enum(["reps", "timed", "cardio", "stretch"]).optional(),
+  insertAfterIndex: z.number().int().min(0).nullable().optional(),
+  sets: z.array(VoiceOpSetSchema).optional(),
+  confidence: z.number().min(0).max(1),
+  explanation: z.string().optional(),
+});
+
+// superRefine: enforce per-op required fields after Gemini flattens everything
+const VoiceLogOperationSchema = VoiceLogOperationRawSchema.superRefine((op, ctx) => {
+  // Operations that require exerciseIndex
+  const needsExerciseIndex = new Set([
+    "log_set",
+    "modify_set",
+    "delete_set",
+    "skip_set",
+    "set_rest",
+    "set_active_exercise",
+  ]);
+  if (needsExerciseIndex.has(op.op) && op.exerciseIndex === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `${op.op} requires exerciseIndex`,
+      path: ["exerciseIndex"],
+    });
+  }
+
+  // Operations that require setIndex
+  const needsSetIndex = new Set(["modify_set", "delete_set", "skip_set", "set_rest"]);
+  if (needsSetIndex.has(op.op) && op.setIndex === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `${op.op} requires setIndex`,
+      path: ["setIndex"],
+    });
+  }
+
+  // set_rest requires restAfterSec
+  if (op.op === "set_rest" && op.restAfterSec === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "set_rest requires restAfterSec",
+      path: ["restAfterSec"],
+    });
+  }
+
+  // add_exercise requires exerciseName and trackingMode
+  if (op.op === "add_exercise") {
+    if (!op.exerciseName) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "add_exercise requires exerciseName",
+        path: ["exerciseName"],
+      });
+    }
+    if (!op.trackingMode) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "add_exercise requires trackingMode",
+        path: ["trackingMode"],
+      });
+    }
+  }
+});
+
+export type VoiceLogOperation = z.infer<typeof VoiceLogOperationSchema>;
+
+const VoiceWorkoutLogResponseSchema = z.object({
+  summary: z.string().min(1),
+  transcript: z.string().min(1),
+  operations: z.array(VoiceLogOperationSchema).max(50),
+  unmatched: z.array(z.string()).max(20),
+});
+
+// ── Legacy V1 schema (entries[]) — served to clients that do NOT send
+// protocolVersion: 2 (i.e. app builds shipped before the operations[] refactor).
+// Kept verbatim from the pre-refactor contract so existing installs keep working. ──
+
+const VoiceWorkoutLogV1SetSchema = z.object({
   setIndex: z.number().int().min(0).optional(),
   weightKg: z.number().min(0).max(1000).optional(),
   reps: z.number().int().min(0).max(200).optional(),
@@ -41,23 +147,35 @@ const VoiceWorkoutLogSetSchema = z.object({
   restAfterSec: z.number().int().min(0).max(3600).nullable().optional(),
 });
 
-const VoiceWorkoutLogEntrySchema = z.object({
+const VoiceWorkoutLogV1EntrySchema = z.object({
   exerciseIndex: z.number().int().min(0),
   exerciseName: z.string().min(1),
   confidence: z.number().min(0).max(1),
-  sets: z.array(VoiceWorkoutLogSetSchema).min(1).max(20),
+  sets: z.array(VoiceWorkoutLogV1SetSchema).min(1).max(20),
 });
 
-const VoiceWorkoutLogResponseSchema = z.object({
+const VoiceWorkoutLogV1ResponseSchema = z.object({
   summary: z.string().min(1),
   transcript: z.string().min(1),
-  entries: z.array(VoiceWorkoutLogEntrySchema).max(20),
+  entries: z.array(VoiceWorkoutLogV1EntrySchema).max(20),
   unmatched: z.array(z.string()).max(20),
 });
 
-export type LogWorkoutAudioResult = z.infer<typeof VoiceWorkoutLogResponseSchema>;
+export type LogWorkoutAudioResultV2 = z.infer<typeof VoiceWorkoutLogResponseSchema>;
+export type LogWorkoutAudioResultV1 = z.infer<typeof VoiceWorkoutLogV1ResponseSchema>;
+export type LogWorkoutAudioResult = LogWorkoutAudioResultV2 | LogWorkoutAudioResultV1;
 
 // ── Input types ────────────────────────────────────────────────────────────────
+
+interface LoggedSetContext {
+  setIndex: number;
+  weightKg: number | null;
+  reps: number | null;
+  rir: number | null;
+  durationSeconds: number | null;
+  isConfirmed: boolean;
+  isWarmup: boolean;
+}
 
 interface ExerciseContext {
   exerciseIndex: number;
@@ -65,6 +183,8 @@ interface ExerciseContext {
   canonicalExerciseId: string | null;
   trackingMode: "reps" | "timed" | "cardio" | "stretch";
   targetSetCount: number;
+  isActive?: boolean;
+  loggedSets?: LoggedSetContext[];
 }
 
 interface LogWorkoutAudioParams {
@@ -72,13 +192,79 @@ interface LogWorkoutAudioParams {
   audioBase64: string;
   mimeType: "audio/m4a" | "audio/mp4" | "audio/wav" | "audio/webm";
   defaultWeightUnit: "kg" | "lbs";
+  hideRirControls?: boolean;
+  /** When 2, return the operations[] response; otherwise the legacy entries[] response. */
+  protocolVersion?: 2;
   exercises: ExerciseContext[];
 }
 
 // ── Structured response schema (Type enum from @google/genai) ─────────────────
-// This must exactly match the Cloud Function's VOICE_WORKOUT_RESPONSE_SCHEMA.
+// Gemini's responseSchema does NOT support discriminated unions, so each operation
+// is a single flat OBJECT with all possible fields. Per-op constraints are enforced
+// post-generation by VoiceLogOperationSchema.superRefine above.
 
 const VOICE_WORKOUT_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    summary: { type: Type.STRING },
+    transcript: { type: Type.STRING },
+    operations: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          op: {
+            type: Type.STRING,
+            enum: [
+              "log_set",
+              "modify_set",
+              "delete_set",
+              "skip_set",
+              "set_rest",
+              "set_active_exercise",
+              "add_exercise",
+            ],
+          },
+          exerciseIndex: { type: Type.INTEGER },
+          setIndex: { type: Type.INTEGER },
+          weightKg: { type: Type.NUMBER },
+          reps: { type: Type.INTEGER },
+          rir: { type: Type.INTEGER },
+          durationSeconds: { type: Type.INTEGER },
+          distanceKm: { type: Type.NUMBER },
+          restAfterSec: { type: Type.INTEGER, nullable: true },
+          exerciseName: { type: Type.STRING },
+          trackingMode: {
+            type: Type.STRING,
+            enum: ["reps", "timed", "cardio", "stretch"],
+          },
+          insertAfterIndex: { type: Type.INTEGER, nullable: true },
+          sets: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                weightKg: { type: Type.NUMBER },
+                reps: { type: Type.INTEGER },
+                rir: { type: Type.INTEGER },
+                durationSeconds: { type: Type.INTEGER },
+                distanceKm: { type: Type.NUMBER },
+              },
+            },
+          },
+          confidence: { type: Type.NUMBER },
+          explanation: { type: Type.STRING },
+        },
+        required: ["op", "confidence"],
+      },
+    },
+    unmatched: { type: Type.ARRAY, items: { type: Type.STRING } },
+  },
+  required: ["summary", "transcript", "operations", "unmatched"],
+} as const;
+
+// Legacy V1 Gemini schema (entries[]) — served to pre-refactor clients.
+const VOICE_WORKOUT_V1_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
     summary: { type: Type.STRING },
@@ -114,9 +300,69 @@ const VOICE_WORKOUT_RESPONSE_SCHEMA = {
   required: ["summary", "transcript", "entries", "unmatched"],
 } as const;
 
-// ── Prompts (ported from functions/src/prompts/workoutVoice.ts) ────────────────
+// ── Prompts ───────────────────────────────────────────────────────────────────
 
 const WORKOUT_VOICE_SYSTEM = [
+  "You are the voice-logging engine for Hollis Workouts. You convert a spoken workout log (audio) into an ordered list of structured OPERATIONS that mutate the user's live training session. You never chat; you only emit the operations JSON.",
+  "",
+  "## Core rules",
+  "- Emit ONLY facts stated in the audio or unambiguously implied by the workout context. Never invent weights, reps, RIR, durations, distances, or exercises.",
+  "- Every operation MUST reference a real exerciseIndex from the provided context, EXCEPT add_exercise, which names a new exercise to insert.",
+  "- Output all weights in kilograms. Convert pounds to kg. If no unit is spoken, use defaultWeightUnit. Output distances in kilometers; convert miles.",
+  "- Each operation carries a confidence in [0,1] and a short explanation.",
+  "- If a phrase cannot be confidently mapped to an operation, add it to unmatched rather than guessing. Prefer unmatched over a low-confidence destructive op.",
+  "",
+  "## Choosing the right operation",
+  "- log_set: a NEW result for a set that is not yet logged. Omit setIndex to append to the next open set; supply setIndex only if the user names a specific set (\"set three was...\").",
+  "- modify_set: CORRECT or CHANGE a set that already has logged values (see loggedSets). \"Actually set two was nine reps\", \"make my last set 100 kilos\", \"bump the RIR on bench set one to 2\". ALWAYS prefer modify_set over log_set when the target set already has values. Only include fields that change.",
+  "- delete_set / skip_set: \"delete my last set\", \"skip set four\".",
+  "- set_rest: rest between sets (\"rested ninety seconds\", \"two minutes rest\").",
+  "- set_active_exercise: pure navigation (\"move to squats\", \"next exercise\", \"done with bench\") with no new data.",
+  "- add_exercise: the user introduces an exercise NOT in the context (\"add lateral raises, three sets of fifteen\"). Provide exerciseName, trackingMode, and any sets mentioned. Do NOT fabricate a canonicalExerciseId.",
+  "",
+  "## Targeting",
+  "- Resolve spoken exercise names to the closest exerciseIndex in context. Use isActive to disambiguate bare references (\"that set\", \"another one\") — they refer to the active exercise.",
+  "- setIndex is 0-based. \"Set one\" = setIndex 0. Warmups count as sets if present in loggedSets.",
+  "- For reps exercises include weightKg, reps, and rir when known. If hideRirControls is true, do not solicit or infer RIR.",
+  "- For timed exercises include durationSeconds. For cardio include durationSeconds and/or distanceKm. For stretch include durationSeconds.",
+  "",
+  "## Multiple commands in one recording",
+  "- The audio may contain several actions in sequence. Emit one operation per action, IN SPOKEN ORDER. A later modify_set may correct an earlier log_set in the same response — keep both.",
+  "",
+  "## Output fields",
+  "- summary: ONE factual sentence (~10 words) describing the net result. No praise, no emojis.",
+  "- transcript: concise phrase-level words you heard, preserving exercises/weights/reps/RIR/durations.",
+  "- operations: the ordered operation list (may be empty if nothing was actionable).",
+  "- unmatched: any audio you could not confidently map.",
+  "",
+  "Return only the JSON object matching the provided response schema. The top-level array field MUST be operations. Never use aliases like sets, entries, or lifts.",
+].join("\n");
+
+function buildVoicePrompt(params: LogWorkoutAudioParams): string {
+  return [
+    "## Workout context (authoritative exercise list)",
+    JSON.stringify(
+      {
+        defaultWeightUnit: params.defaultWeightUnit,
+        hideRirControls: params.hideRirControls ?? false,
+        exercises: params.exercises,
+      },
+      null,
+      2,
+    ),
+    "",
+    "## Task",
+    "Transcribe the attached audio and emit an ordered operations[] list describing every action spoken.",
+    "Each operation targets a real exerciseIndex from the context above (except add_exercise).",
+    "Use isActive on each exercise to resolve bare references (\"that set\", \"another one\").",
+    "Use loggedSets to determine whether a set already has values — prefer modify_set when it does.",
+    "summary: one factual sentence (~10 words). No praise.",
+  ].join("\n");
+}
+
+// ── Legacy V1 prompts (entries[]) — served to pre-refactor clients ─────────────
+
+const WORKOUT_VOICE_V1_SYSTEM = [
   "You convert spoken workout logs into structured JSON for Hollis Workouts.",
   "Return only facts present in the audio or safely implied by the current exercise context.",
   "Map each logged lift to one of the provided exerciseIndex values. Do not invent exercises not in the context.",
@@ -132,7 +378,7 @@ const WORKOUT_VOICE_SYSTEM = [
   "unmatched: any audio content you could not map to an exercise.",
 ].join("\n");
 
-function buildVoicePrompt(params: LogWorkoutAudioParams): string {
+function buildVoiceV1Prompt(params: LogWorkoutAudioParams): string {
   return [
     "## Workout context (authoritative exercise list)",
     JSON.stringify({ defaultWeightUnit: params.defaultWeightUnit, exercises: params.exercises }, null, 2),
@@ -158,16 +404,21 @@ function parseJsonResponse(text: string): unknown {
 
 // ── Service function ──────────────────────────────────────────────────────────
 
-export async function logWorkoutAudio(
+// Shared Gemini call + JSON parse. The system prompt, task prompt, and response
+// schema vary by protocol version; everything else (client/model resolution, token
+// accounting, fence-stripping, error mapping) is identical.
+async function callVoiceGemini(
   params: LogWorkoutAudioParams,
-): Promise<Result<LogWorkoutAudioResult>> {
+  systemInstruction: string,
+  userPrompt: string,
+  responseSchema: unknown,
+): Promise<Result<unknown>> {
   const client = getGeminiClient();
   if (!client) {
     return err("INTERNAL_ERROR", "AI service is not configured (missing GOOGLE_CLOUD_PROJECT)");
   }
 
   const model = getGeminiFlashModel();
-  const validExerciseIndexes = new Set(params.exercises.map((e) => e.exerciseIndex));
 
   let response: Awaited<ReturnType<typeof client.models.generateContent>>;
   try {
@@ -177,16 +428,16 @@ export async function logWorkoutAudio(
         {
           role: "user",
           parts: [
-            { text: buildVoicePrompt(params) },
+            { text: userPrompt },
             { inlineData: { mimeType: params.mimeType, data: params.audioBase64 } },
           ],
         },
       ],
       config: {
         thinkingConfig: getGeminiThinkingConfig(),
-        systemInstruction: WORKOUT_VOICE_SYSTEM,
+        systemInstruction,
         responseMimeType: "application/json",
-        responseSchema: VOICE_WORKOUT_RESPONSE_SCHEMA,
+        responseSchema,
       },
     });
   } catch (error) {
@@ -204,9 +455,8 @@ export async function logWorkoutAudio(
     usageMetadata: response.usageMetadata,
   });
 
-  let json: unknown;
   try {
-    json = parseJsonResponse(response.text ?? "");
+    return ok(parseJsonResponse(response.text ?? ""));
   } catch {
     logger.error(
       { raw: (response.text ?? "").slice(0, 500), component: "logWorkoutAudio" },
@@ -214,8 +464,22 @@ export async function logWorkoutAudio(
     );
     return err("INTERNAL_ERROR", "AI returned an unexpected response. Please try again.");
   }
+}
 
-  const validated = VoiceWorkoutLogResponseSchema.safeParse(json);
+// V2 (operations[]) — for clients that send protocolVersion: 2.
+async function logWorkoutAudioV2(
+  params: LogWorkoutAudioParams,
+  validExerciseIndexes: Set<number>,
+): Promise<Result<LogWorkoutAudioResultV2>> {
+  const raw = await callVoiceGemini(
+    params,
+    WORKOUT_VOICE_SYSTEM,
+    buildVoicePrompt(params),
+    VOICE_WORKOUT_RESPONSE_SCHEMA,
+  );
+  if (!raw.ok) return raw;
+
+  const validated = VoiceWorkoutLogResponseSchema.safeParse(raw.data);
   if (!validated.success) {
     logger.error(
       { error: validated.error.flatten(), component: "logWorkoutAudio" },
@@ -224,7 +488,46 @@ export async function logWorkoutAudio(
     return err("INTERNAL_ERROR", "AI response failed validation. Please try again.");
   }
 
-  // Exercise index guard: all returned indexes must match input indexes.
+  // Exercise index guard: all returned indexes (except add_exercise, which has none)
+  // must match input indexes.
+  const invalidIndexes = validated.data.operations
+    .filter((op) => op.op !== "add_exercise" && op.exerciseIndex !== undefined)
+    .map((op) => op.exerciseIndex as number)
+    .filter((idx) => !validExerciseIndexes.has(idx));
+
+  if (invalidIndexes.length > 0) {
+    logger.error(
+      { invalidIndexes, component: "logWorkoutAudio" },
+      "AI returned unknown exercise indexes",
+    );
+    return err("INTERNAL_ERROR", "AI returned unknown exercise indexes. Please try again.");
+  }
+
+  return ok(validated.data);
+}
+
+// V1 (entries[]) — legacy shape for app builds shipped before the operations refactor.
+async function logWorkoutAudioV1(
+  params: LogWorkoutAudioParams,
+  validExerciseIndexes: Set<number>,
+): Promise<Result<LogWorkoutAudioResultV1>> {
+  const raw = await callVoiceGemini(
+    params,
+    WORKOUT_VOICE_V1_SYSTEM,
+    buildVoiceV1Prompt(params),
+    VOICE_WORKOUT_V1_RESPONSE_SCHEMA,
+  );
+  if (!raw.ok) return raw;
+
+  const validated = VoiceWorkoutLogV1ResponseSchema.safeParse(raw.data);
+  if (!validated.success) {
+    logger.error(
+      { error: validated.error.flatten(), component: "logWorkoutAudio" },
+      "AI response failed validation",
+    );
+    return err("INTERNAL_ERROR", "AI response failed validation. Please try again.");
+  }
+
   const invalidIndexes = validated.data.entries
     .map((entry) => entry.exerciseIndex)
     .filter((idx) => !validExerciseIndexes.has(idx));
@@ -238,4 +541,13 @@ export async function logWorkoutAudio(
   }
 
   return ok(validated.data);
+}
+
+export async function logWorkoutAudio(
+  params: LogWorkoutAudioParams,
+): Promise<Result<LogWorkoutAudioResult>> {
+  const validExerciseIndexes = new Set(params.exercises.map((e) => e.exerciseIndex));
+  return params.protocolVersion === 2
+    ? logWorkoutAudioV2(params, validExerciseIndexes)
+    : logWorkoutAudioV1(params, validExerciseIndexes);
 }

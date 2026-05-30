@@ -53,17 +53,33 @@ export const ExerciseSearchSemanticScoresBodySchema = z.object({
 
 // ── logWorkoutAudio ──────────────────────────────────────────────────────────
 
+const LoggedSetContextSchema = z.object({
+  setIndex: z.number().int().min(0),
+  weightKg: z.number().nullable(),
+  reps: z.number().int().nullable(),
+  rir: z.number().int().nullable(),
+  durationSeconds: z.number().int().nullable(),
+  isConfirmed: z.boolean(),
+  isWarmup: z.boolean(),
+});
+
 export const LogWorkoutAudioBodySchema = z.object({
   audioBase64: z.string().min(1),
   mimeType: z.enum(["audio/m4a", "audio/mp4", "audio/wav", "audio/webm"]),
   defaultWeightUnit: z.enum(["kg", "lbs"]),
+  hideRirControls: z.boolean().optional(),
+  // Response-protocol opt-in. Clients that understand operations[] send 2;
+  // older app builds omit it and receive the legacy entries[] response.
+  protocolVersion: z.literal(2).optional(),
   exercises: z.array(
     z.object({
       exerciseIndex: z.number().int().min(0),
       exerciseName: z.string().min(1),
       canonicalExerciseId: z.string().nullable(),
       trackingMode: z.enum(["reps", "timed", "cardio", "stretch"]),
-      targetSetCount: z.number().int().min(1),
+      targetSetCount: z.number().int().min(0),
+      isActive: z.boolean().optional(),
+      loggedSets: z.array(LoggedSetContextSchema).optional(),
     }),
   ),
 });

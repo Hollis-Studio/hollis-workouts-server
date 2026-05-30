@@ -1,0 +1,212 @@
+# ==============================================================================
+# Deploy — ECS Fargate (prod)
+# ==============================================================================
+#
+# Builds the server image, pushes it to ECR, and rolls the ECS service.
+# Auth: GitHub OIDC → assumes the narrow `${name}-github-actions-deploy-role`
+# (ECR push + ECS roll only). No static AWS credentials.
+#
+# Gate: the job targets the `production` GitHub Environment. Configure that
+# environment with a required reviewer so every prod deploy waits for a
+# one-click approval ("gated on main").
+#
+# Migrations: the container entrypoint (ops/entrypoint.sh) runs
+# `prisma migrate deploy` on every task start. During this rolling deploy the
+# new task applies pending migrations before serving traffic; if a migration
+# fails the task crashes, the ECS circuit breaker rolls back, and this workflow
+# fails at "wait-for-service-stability". No separate migration step is needed.
+# ==============================================================================
+
+name: Deploy
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "src/**"
+      - "prisma/**"
+      - "ops/**"
+      - "Dockerfile"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Existing ECR image tag to deploy (defaults to the commit SHA built by this run)."
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: hollis-workouts-server
+  ECS_CLUSTER: hollis-prod-cluster
+  ECS_SERVICE: hollis-workouts-server
+  TASK_FAMILY: hollis-workouts-server
+  CONTAINER_NAME: workouts-server
+  HEALTH_URL: https://workouts-api.hollis.health/healthz
+
+permissions:
+  id-token: write # OIDC
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    # Block workflow_dispatch from non-main refs; only deploy from main.
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: tag
+        run: echo "value=${{ github.event.inputs.image_tag || github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_APP_ROLE_ARN }}
+          role-session-name: github-actions-deploy-workouts
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── Build + push (skipped when deploying an already-built tag) ──────────
+      - name: Set up Docker Buildx
+        if: github.event.inputs.image_tag == ''
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare npm auth for Docker build
+        if: github.event.inputs.image_tag == ''
+        run: |
+          cat > /tmp/npmrc-ci <<EOF
+          //npm.pkg.github.com/:_authToken=${{ secrets.NODE_AUTH_TOKEN }}
+          @hollis-studio:registry=https://npm.pkg.github.com
+          EOF
+
+      - name: Build and push image
+        if: github.event.inputs.image_tag == ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tag.outputs.value }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          provenance: false
+          secret-files: |
+            npmrc=/tmp/npmrc-ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Clean up npmrc secret
+        if: always()
+        run: rm -f /tmp/npmrc-ci
+
+      - name: Wait for ECR image propagation
+        run: |
+          for attempt in $(seq 1 30); do
+            if aws ecr describe-images \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-ids imageTag="${{ steps.tag.outputs.value }}" \
+              --query 'imageDetails[0].imageTags' --output text 2>/dev/null \
+              | grep -q "${{ steps.tag.outputs.value }}"; then
+              echo "✅ Image ${{ steps.tag.outputs.value }} available in ECR"
+              exit 0
+            fi
+            echo "Image not ready (attempt ${attempt}/30); waiting 10s…"
+            sleep 10
+          done
+          echo "::error::ECR image not available after 5 minutes"
+          exit 1
+
+      # ── Render the current task definition with the new image ───────────────
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_FAMILY" \
+            --query 'taskDefinition' \
+            > task-definition.json
+
+      - name: Render task definition
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.tag.outputs.value }}
+
+      # The ECS circuit breaker can roll desiredCount to 0 after repeated
+      # failures; the deploy action then treats 0 as "stable". Restore to >=1.
+      - name: Ensure desired count >= 1
+        run: |
+          DESIRED=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].desiredCount' --output text)
+          if [ "$DESIRED" = "0" ]; then
+            echo "desiredCount is 0 (circuit-breaker rollback); restoring to 1"
+            aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+              --desired-count 1 >/dev/null
+          else
+            echo "desiredCount is ${DESIRED}"
+          fi
+
+      - name: Deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 20
+
+      - name: Verify deployment health
+        run: |
+          echo "Waiting 45s for ALB target registration…"
+          sleep 45
+          for attempt in $(seq 1 10); do
+            CODE=$(curl -s -o /tmp/health -w "%{http_code}" --max-time 10 "$HEALTH_URL" || echo "000")
+            if [ "$CODE" = "200" ]; then
+              echo "✅ Health check passed (attempt ${attempt}): $(cat /tmp/health)"
+              exit 0
+            fi
+            echo "Health check ${CODE} (attempt ${attempt}/10); retrying in 15s…"
+            sleep 15
+          done
+          echo "::error::Health check failed after retries (last status: ${CODE})"
+          echo "--- recent container logs ---"
+          STREAMS=$(aws logs describe-log-streams \
+            --log-group-name "/ecs/${TASK_FAMILY}" \
+            --order-by LastEventTime --descending --limit 3 \
+            --query 'logStreams[*].logStreamName' --output text 2>/dev/null || echo "")
+          for S in $STREAMS; do
+            echo "=== $S ==="
+            aws logs get-log-events \
+              --log-group-name "/ecs/${TASK_FAMILY}" --log-stream-name "$S" \
+              --limit 40 --start-from-head false \
+              --query 'events[*].message' --output text 2>/dev/null || true
+          done
+          exit 1
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          {
+            echo "## Deployment Summary"
+            echo ""
+            echo "- **Image tag:** \`${{ steps.tag.outputs.value }}\`"
+            echo "- **Cluster:** \`${ECS_CLUSTER}\`"
+            echo "- **Service:** \`${ECS_SERVICE}\`"
+            echo "- **Triggered by:** ${{ github.actor }}"
+            echo "- **Status:** ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

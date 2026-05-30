@@ -17,6 +17,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed-exercises.ts",
+    "seed:reviewer": "tsx scripts/seed-reviewer-account.ts",
     "test": "vitest run"
   },
   "engines": {

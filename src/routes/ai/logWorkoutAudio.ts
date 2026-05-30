@@ -49,6 +49,8 @@ logWorkoutAudioRouter.post(
       audioBase64: parsed.data.audioBase64,
       mimeType: parsed.data.mimeType,
       defaultWeightUnit: parsed.data.defaultWeightUnit,
+      hideRirControls: parsed.data.hideRirControls,
+      protocolVersion: parsed.data.protocolVersion,
       exercises: parsed.data.exercises,
     });
 

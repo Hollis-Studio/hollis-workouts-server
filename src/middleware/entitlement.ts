@@ -28,6 +28,11 @@ import { logger } from "../lib/logger.js";
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const REVENUECAT_SUBSCRIBER_URL = "https://api.revenuecat.com/v1/subscribers/";
 const ENTITLEMENT_ID = "hollis_intelligence";
+const REVENUECAT_ENTITLEMENT_IDS = [
+  ENTITLEMENT_ID,
+  "hollisIntelligence",
+  "Hollis Intelligence",
+] as const;
 
 // ── In-memory cache ───────────────────────────────────────────────────────────
 
@@ -74,7 +79,13 @@ function isEntitlementActive(entitlement: RevenueCatEntitlement | undefined): bo
 function hasSubscriberHistory(response: RevenueCatSubscriberResponse): boolean {
   const subscriber = response.subscriber;
   if (!subscriber) return false;
-  if (subscriber.entitlements?.[ENTITLEMENT_ID]) return true;
+  if (
+    REVENUECAT_ENTITLEMENT_IDS.some(
+      (entitlementId) => subscriber.entitlements?.[entitlementId],
+    )
+  ) {
+    return true;
+  }
   return Object.values(subscriber.subscriptions ?? {}).some((sub) => {
     if (!sub) return false;
     return (
@@ -105,9 +116,9 @@ async function fetchEntitlementFromRevenueCat(
   }
 
   const json = (await response.json()) as RevenueCatSubscriberResponse;
-  const hollisIntelligence =
-    isEntitlementActive(json.subscriber?.entitlements?.[ENTITLEMENT_ID]) ||
-    isEntitlementActive(json.subscriber?.entitlements?.["hollisIntelligence"]);
+  const hollisIntelligence = REVENUECAT_ENTITLEMENT_IDS.some((entitlementId) =>
+    isEntitlementActive(json.subscriber?.entitlements?.[entitlementId]),
+  );
 
   return {
     hollisIntelligence,

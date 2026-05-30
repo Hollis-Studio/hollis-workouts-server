@@ -168,6 +168,8 @@ describe("GET /v1/profile", () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.data.userId).toBe(TEST_USER_ID);
+    // The app's UserProfileSchema requires `uid` — the response must surface it.
+    expect(res.body.data.uid).toBe(TEST_USER_ID);
     expect(res.body.data.displayName).toBe("Isaac");
   });
 

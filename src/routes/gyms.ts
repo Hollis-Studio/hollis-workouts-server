@@ -104,7 +104,9 @@ const GymEquipmentItemSchema = z.object({
   variant: EquipmentVariantSchema.optional(),
   weightSystem: EquipmentWeightSystemSchema.optional(),
   weightStackKg: z.number().nonnegative().optional(),
-  incrementKg: z.number().positive().optional(),
+  // App's GymEquipmentItemSchema allows incrementKg: 0 (min(0)); rejecting 0
+  // here would 400 the gym PUT and silently drop the write in the outbox.
+  incrementKg: z.number().nonnegative().optional(),
   minWeightKg: z.number().nonnegative().optional(),
   maxWeightKg: z.number().nonnegative().optional(),
   count: z.number().int().positive(),

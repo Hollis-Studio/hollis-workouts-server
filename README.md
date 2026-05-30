@@ -111,6 +111,8 @@ All CRUD handlers are fully implemented (user-scoped, IDOR-safe, cursor-paginate
 
 Deployed on AWS ECS Fargate behind `https://workouts-api.hollis.health`. Verified 2026-05-27: ECS service `hollis-workouts-server` on `hollis-prod-cluster`, desired/running `2/2`, healthy ALB targets on port `3002`, `/healthz` 200, `/readyz` 200 with Postgres connected. Logs ship to CloudWatch at `/ecs/hollis-workouts-server` in `us-east-1`; container images live in ECR repository `hollis-workouts-server`; secrets are injected from AWS Secrets Manager.
 
+**Continuous deployment:** `.github/workflows/deploy.yml` builds, pushes to ECR, and rolls the ECS service on every push to `main` (or via `workflow_dispatch`), authenticating with GitHub OIDC (no static AWS keys) and gating on the `production` GitHub Environment's required reviewer. Migrations run on the container entrypoint, so the rollout applies them before serving traffic. See [`infrastructure/README.md` → Continuous Deployment](infrastructure/README.md#continuous-deployment-github-actions--ecs) for the one-time setup.
+
 ## Build Status
 
 | Milestone                                                             | Status                                                                                              |

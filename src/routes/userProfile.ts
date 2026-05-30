@@ -50,7 +50,9 @@ const userSettingsSchema = z
     defaultDistanceUnit: z.enum(["km", "mi"]),
     defaultWeightIncrementKg: z.number().min(0).optional(),
     workoutExperienceLevel: z
-      .enum(["beginner", "intermediate", "advanced"])
+      // "new" is the app's first-run value (WORKOUT_EXPERIENCE_LEVELS) — must be
+      // accepted or every freshly-onboarded user's profile PUT 400s.
+      .enum(["new", "beginner", "intermediate", "advanced"])
       .optional(),
     progressionIncrementKg: z.number().min(0),
     repIncrement: z.number().int().min(1),
@@ -166,6 +168,16 @@ const userProfileBodySchema = z.object({
 
 type UserProfileBody = z.infer<typeof userProfileBodySchema>;
 
+/**
+ * The app's UserProfileSchema requires a `uid` field (the singleton doc id from
+ * the Firestore era), but this table's PK column is `userId`. Surface `uid` in
+ * every response so the client's Zod accepts the payload (extra `userId` is
+ * harmless — the client schema strips unknown keys).
+ */
+function toClientProfile<T extends { userId: string }>(profile: T): T & { uid: string } {
+  return { ...profile, uid: profile.userId };
+}
+
 export const userProfileRouter = Router();
 
 // GET / — fetch singleton for the authenticated user
@@ -180,7 +192,7 @@ userProfileRouter.get(
 
     if (!profile) throw AppError.notFound("UserProfile");
 
-    sendSuccess(res, profile);
+    sendSuccess(res, toClientProfile(profile));
   }),
 );
 
@@ -247,6 +259,6 @@ userProfileRouter.put(
     });
 
     // Singleton upsert — 200 (idempotent; not 201)
-    sendSuccess(res, profile);
+    sendSuccess(res, toClientProfile(profile));
   }),
 );
