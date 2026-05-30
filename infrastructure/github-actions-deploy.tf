@@ -46,8 +46,17 @@ resource "aws_iam_role" "github_actions_deploy" {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
           StringLike = {
-            # Main-branch pushes only — not PRs or arbitrary branches.
-            "token.actions.githubusercontent.com:sub" = "repo:${var.github_deploy_repo}:ref:refs/heads/main"
+            # The deploy job runs with `environment: production`, so GitHub's
+            # OIDC token subject is `repo:<repo>:environment:production` (NOT the
+            # `:ref:refs/heads/main` form). Allow both: the environment subject
+            # the job actually presents, plus the main-branch ref for any step
+            # that runs outside the environment. Scoped to this repo only — no
+            # PRs or arbitrary branches. (health-app uses a broader
+            # `repo:org/*:*`; this is the tighter, repo-scoped equivalent.)
+            "token.actions.githubusercontent.com:sub" = [
+              "repo:${var.github_deploy_repo}:environment:production",
+              "repo:${var.github_deploy_repo}:ref:refs/heads/main",
+            ]
           }
         }
       }
